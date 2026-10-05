@@ -1,0 +1,18 @@
+{
+  "name": "equaroots-dashboard",
+  "private": true,
+  "version": "1.0.0",
+  "description": "EquaRoots doctor dashboard — Cal.id bookings, patient IDs, prescriptions (API + Postgres + React)",
+  "workspaces": ["server", "web"],
+  "scripts": {
+    "dev": "npm run dev -w server & npm run dev -w web",
+    "build": "npm run build -w web && npm run build -w server",
+    "start": "npm run start -w server",
+    "migrate": "npm run migrate -w server",
+    "seed:demo": "npm run seed:demo -w server",
+    "migrate:sheet": "npm run migrate:sheet -w server --",
+    "test": "npm test -w server",
+    "typecheck": "npm run typecheck -w server && npm run typecheck -w web"
+  },
+  "engines": { "node": ">=20" }
+}
