@@ -293,3 +293,40 @@ describe('shared doctor emails + digital signatures', () => {
     await radha.get('/api/admin/doctors').expect(403);
   });
 });
+
+describe('import: Booking Data export format', () => {
+  // Synthetic rows in the exact column layout of the live "Booking Data" tab:
+  // Cal's "status" + a manual "Status", "Patient Emial" (sic), "Patient Ph No", "Dr Name"/"Dr Email", responses JSON.
+  const header = 'id,title,description,startTime,status,responses,location,Patient Name,Age,Gender,Patient Emial,Patient Ph No,Patient_Id,Patient Type,Dr Name,Drive Link,Dr Email,Status';
+  const csvRow = (cells: string[]) => cells.map((c) => `"${c.replace(/"/g, '""')}"`).join(',');
+  const resp = (o: object) => JSON.stringify(o);
+  const csv = [
+    header,
+    csvRow(['900001', 'Consult A', '', '', 'ACCEPTED', resp({ name: 'Test One', email: 't1@x.com' }), 'Google Meet', 'Test One', '30', 'Female', 't1@x.com', '+919000000001', 'PAT-201', 'New', 'Dr. Asha One', 'https://drive.google.com/file/d/abc/view', 'hello@clinic.com', 'Prescription Sent']),
+    csvRow(['900002', 'Consult B', 'NA', '', 'CANCELLED', resp({ name: 'Test Two' }), 'Google Meet', 'Test Two', '', '', 't2@x.com', '', '', '', 'Dr Bina Two', '', 'bina@elsewhere.com', '']),
+    csvRow(['900003', 'Consult C', '', '', 'ACCEPTED', resp({ name: 'From Responses', email: 'fr@x.com', attendeePhoneNumber: '+919000000003', age: '41', Gender: 'Male' }), 'Google Meet', '', '', '', '', '', 'PAT-202', 'New', 'Dr. Asha One', '', 'hello@clinic.com', '']),
+    csvRow(['900004', 'Group talk', '', '', 'ACCEPTED', resp([{ data: { responses: { name: 'A' } } }, { data: { responses: { name: 'B' } } }]), 'Cal Video', '', '', '', 'a@x.com;b@x.com', '', '', '', 'Dr. Asha One', '', 'hello@clinic.com', '']),
+  ].join('\n');
+
+  it('maps typo columns, keeps both status columns, falls back to responses JSON, skips group events', async () => {
+    const admin = await agentFor('admin@example.com');
+    const out = (await admin.post('/api/admin/import-csv').send({ bookings: csv }).expect(200)).body.summary.bookings;
+    expect(out.inserted).toBe(3);
+    expect(out.skipped).toEqual([expect.stringContaining('group event with 2 attendees')]);
+    const rows = (await pool.query(
+      `select cal_uid, patient_name, patient_email, patient_phone, age, gender, patient_id, status, pdf_url, description, d.display_name doctor
+         from bookings b left join doctors d on d.id=b.doctor_id where cal_uid like '9000%' order by cal_uid`,
+    )).rows;
+    expect(rows).toEqual([
+      { cal_uid: '900001', patient_name: 'Test One', patient_email: 't1@x.com', patient_phone: '+919000000001', age: '30', gender: 'Female',
+        patient_id: 'PAT-201', status: 'Prescription Sent', pdf_url: 'https://drive.google.com/file/d/abc/view', description: null, doctor: 'Dr Asha One' },
+      { cal_uid: '900002', patient_name: 'Test Two', patient_email: 't2@x.com', patient_phone: null, age: null, gender: null,
+        patient_id: null, status: 'CANCELLED', pdf_url: null, description: null, doctor: 'Dr. Bina Two' },
+      { cal_uid: '900003', patient_name: 'From Responses', patient_email: 'fr@x.com', patient_phone: '+919000000003', age: '41', gender: 'Male',
+        patient_id: 'PAT-202', status: 'ACCEPTED', pdf_url: null, description: null, doctor: 'Dr Asha One' },
+    ]);
+    // re-import is idempotent
+    const again = (await admin.post('/api/admin/import-csv').send({ bookings: csv }).expect(200)).body.summary.bookings;
+    expect(again).toMatchObject({ inserted: 0, updated: 3 });
+  });
+});

@@ -29,7 +29,17 @@ const key = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, '');
 
 function rows(csv: string | undefined): Row[] {
   if (!csv?.trim()) return [];
-  const recs = parse(csv, { columns: true, skip_empty_lines: true, bom: true, relax_column_count: true, trim: true }) as Row[];
+  // Duplicate headers that differ only by case/punctuation (the Booking Data tab has both Cal's
+  // "status" and a manual "Status" column) are kept apart as "status", "status 2", ...
+  const columns = (header: string[]) => {
+    const seen = new Map<string, number>();
+    return header.map((h) => {
+      const n = (seen.get(key(h)) ?? 0) + 1;
+      seen.set(key(h), n);
+      return n === 1 ? h : `${h} ${n}`;
+    });
+  };
+  const recs = parse(csv, { columns, skip_empty_lines: true, bom: true, relax_column_count: true, trim: true }) as Row[];
   return recs.map((r) => Object.fromEntries(Object.entries(r).map(([k, v]) => [key(k), String(v ?? '').trim()])));
 }
 
@@ -53,6 +63,24 @@ function date(v: string | null): string | null {
   }
   return null;
 }
+
+/** Lower-cased string fields of Cal's "responses" JSON column ({ value } objects unwrapped). */
+function responsesJson(v: string | null): Record<string, string | null> {
+  const out: Record<string, string | null> = {};
+  if (!v) return out;
+  try {
+    const o = JSON.parse(v);
+    for (const [k, raw] of Object.entries(o ?? {})) {
+      const val = raw && typeof raw === 'object' && 'value' in (raw as any) ? (raw as any).value : raw;
+      if (typeof val === 'string' || typeof val === 'number') out[k.toLowerCase()] = String(val).trim() || null;
+    }
+  } catch {
+    /* not JSON — ignore */
+  }
+  return out;
+}
+
+const cleanDescription = (v: string | null) => (v && !/^(na|n\/a|none|-)$/i.test(v.trim()) ? v : null);
 
 function json(v: string | null): unknown {
   if (!v) return [];
@@ -112,22 +140,43 @@ export async function importSheetData(db: Queryable, csv: SheetCsvs): Promise<Im
 
   // 3. Bookings — keep patient_id/patient_type exactly as the old system assigned them.
   for (const [i, r] of rows(csv.bookings).entries()) {
-    const name = get(r, 'name', 'patient name', 'attendee name', 'patient');
+    // Cal's raw "responses" JSON (name/email/phone/age/gender) backs up the hand-filled columns.
+    const rawResponses = get(r, 'responses');
+    if (rawResponses?.trimStart().startsWith('[')) {
+      // Seated/group events (webinars, fireside chats) carry an array of attendees, not one patient.
+      let n = 0;
+      try {
+        n = JSON.parse(rawResponses).length;
+      } catch {
+        /* ignore */
+      }
+      s.bookings.skipped.push(`row ${i + 2}: group event with ${n || 'several'} attendees — not a 1:1 consultation, skipped`);
+      continue;
+    }
+    const resp = responsesJson(rawResponses);
+    const name = get(r, 'patient name', 'name', 'attendee name', 'patient') ?? resp.name;
     if (!name) {
       s.bookings.skipped.push(`row ${i + 2}: missing patient name`);
       continue;
     }
-    const calUid = get(r, 'booking uid', 'uid', 'cal uid', 'booking id', 'bookingid');
-    const doctorName = get(r, 'doctor', 'doctor name', 'organizer', 'organizer name', 'host');
-    const doctorEmail = get(r, 'doctor email', 'organizer email', 'host email');
+    const calUid = get(r, 'booking uid', 'uid', 'cal uid', 'booking id', 'bookingid', 'id');
+    const doctorName = get(r, 'dr name', 'doctor', 'doctor name', 'dr', 'organizer', 'organizer name', 'host');
+    const doctorEmail = get(r, 'dr email', 'doctor email', 'organizer email', 'host email');
     const doctor = matchDoctor(doctors, { email: doctorEmail, name: doctorName });
-    const start = date(get(r, 'start time', 'start', 'date', 'booking date', 'appointment'));
+    const start = date(get(r, 'start time', 'starttime', 'start', 'date', 'booking date', 'appointment'));
+    // "status" is Cal's ACCEPTED/CANCELLED; a second "Status" column records "Prescription Sent".
+    const calStatus = get(r, 'status')?.toUpperCase() ?? null;
+    const sheetStatus = get(r, 'status 2');
+    const status = calStatus === 'CANCELLED' ? 'CANCELLED' : sheetStatus || calStatus || 'ACCEPTED';
     const vals = [
       calUid, get(r, 'patient id', 'patientid', 'pat id'), get(r, 'patient type', 'type', 'new/existing'), name,
-      get(r, 'age'), get(r, 'gender', 'sex'), get(r, 'email', 'patient email', 'attendee email'),
-      get(r, 'phone', 'patient phone', 'phone number', 'mobile'), doctor?.id ?? null, doctorName, doctorEmail,
-      start, date(get(r, 'end time', 'end')), get(r, 'meet link', 'video link', 'meeting link', 'meet'),
-      get(r, 'description', 'notes'), get(r, 'status') ?? 'ACCEPTED', get(r, 'drive link', 'pdf url', 'pdf link', 'prescription link'),
+      get(r, 'age') ?? resp.age, get(r, 'gender', 'sex') ?? resp.gender,
+      get(r, 'patient email', 'patient emial', 'email', 'attendee email') ?? resp.email,
+      get(r, 'patient ph no', 'patient phone', 'phone', 'phone number', 'ph no', 'mobile') ?? resp.attendeephonenumber ?? resp.phone,
+      doctor?.id ?? null, doctorName, doctorEmail,
+      start, date(get(r, 'end time', 'endtime', 'end')), get(r, 'meet link', 'video link', 'meeting link', 'meet'),
+      cleanDescription(get(r, 'description', 'notes') ?? resp.notes), status,
+      get(r, 'drive link', 'pdf url', 'pdf link', 'prescription link'),
     ];
     let existing: number | null = null;
     if (calUid) {
