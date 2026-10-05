@@ -11,7 +11,10 @@ const SESSION_TTL_S = 12 * 60 * 60;
 export interface Viewer {
   email: string;
   isAdmin: boolean;
+  /** First doctor row for this email (null for a pure admin). */
   doctor: Doctor | null;
+  /** All doctor rows sharing this login email (a shared mailbox can host several doctors). */
+  doctors: Doctor[];
   authorized: boolean;
 }
 
@@ -56,12 +59,11 @@ export async function verifyGoogleCredential(credential: string): Promise<string
 
 export async function loadViewer(email: string): Promise<Viewer> {
   const { rows } = await pool.query<Doctor>(
-    'select id, display_name, role, reg_no, signature_url, email from doctors where lower(email)=lower($1)',
+    'select id, display_name, role, reg_no, signature_url, email from doctors where lower(email)=lower($1) order by id',
     [email],
   );
-  const doctor = rows[0] ?? null;
   const isAdmin = isAdminEmail(email);
-  return { email, isAdmin, doctor, authorized: isAdmin || !!doctor };
+  return { email, isAdmin, doctor: rows[0] ?? null, doctors: rows, authorized: isAdmin || rows.length > 0 };
 }
 
 /** Requires a valid session cookie; attaches req.viewer. */

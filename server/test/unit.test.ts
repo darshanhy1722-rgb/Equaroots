@@ -64,6 +64,15 @@ describe('matchDoctor (resolveActingDoctor_)', () => {
   it('matches by email first', () => expect(matchDoctor(docs, { email: 'ARJUN@equaroots.com', name: 'Dr Radha Dangaich' })?.id).toBe(2));
   it('falls back to normalised name ("Dr." vs "Dr")', () =>
     expect(matchDoctor(docs, { email: 'unknown@cal.id', name: 'Dr. Radha Dangaich' })?.id).toBe(1));
+  it('shared email: name decides; ambiguous → null', () => {
+    const shared: Doctor[] = [
+      { ...docs[0], email: 'hello@equaroots.com' },
+      { id: 3, display_name: 'Dr. Abhinav Pandey', role: null, reg_no: null, signature_url: null, email: 'hello@equaroots.com' },
+    ];
+    expect(matchDoctor(shared, { email: 'hello@equaroots.com', name: 'Dr Abhinav Pandey' })?.id).toBe(3);
+    expect(matchDoctor(shared, { email: 'HELLO@equaroots.com', name: 'Dr. Radha Dangaich' })?.id).toBe(1);
+    expect(matchDoctor(shared, { email: 'hello@equaroots.com', name: 'Someone Else' })).toBeNull();
+  });
   it('returns null when nothing matches', () => expect(matchDoctor(docs, { name: 'Dr Nobody' })).toBeNull());
 });
 

@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { api, ApiError, type Bootstrap, type Patient } from './api';
+import { AdminPage } from './components/AdminPage';
 import { Login, NotSetUp } from './components/Login';
 import { PatientCard } from './components/PatientCard';
 import { PrescriptionDrawer } from './components/PrescriptionDrawer';
+import { SignatureModal } from './components/SignatureModal';
 import { Toast, useToast } from './components/Toast';
 
 type Filter = 'all' | 'New' | 'Existing' | 'pending';
@@ -16,6 +18,8 @@ export default function App() {
   const [filter, setFilter] = useState<Filter>('all');
   const [doctorId, setDoctorId] = useState<number | null>(null);
   const [open, setOpen] = useState<Patient | null>(null);
+  const [page, setPage] = useState<'patients' | 'admin'>('patients');
+  const [signing, setSigning] = useState(false);
   const toast = useToast();
 
   const loadBoot = useCallback(async () => {
@@ -98,7 +102,16 @@ export default function App() {
             </div>
           </div>
         </div>
+        {boot!.isAdmin && (
+          <nav className="nav">
+            <button className={page === 'patients' ? 'on' : ''} onClick={() => setPage('patients')}>Patients</button>
+            <button className={page === 'admin' ? 'on' : ''} onClick={() => setPage('admin')}>Admin tools</button>
+          </nav>
+        )}
         <div className="who">
+          {boot!.myDoctors.length > 0 && (
+            <button className="btn ghost sm" onClick={() => setSigning(true)}>✍︎ My signature</button>
+          )}
           <div className="who-text">
             <div className="who-name">{boot!.doctor?.display_name ?? (boot!.isAdmin ? 'Admin' : '')}</div>
             <div className="who-email">{boot!.email}</div>
@@ -109,6 +122,16 @@ export default function App() {
         </div>
       </header>
 
+      {page === 'admin' && boot!.isAdmin ? (
+        <AdminPage toast={toast.show} onDataChanged={loadBoot} />
+      ) : (
+      <>
+      {boot!.myDoctors.some((d) => !d.hasSignature) && (
+        <div className="banner">
+          Add your digital signature so it’s printed on your prescriptions.
+          <button className="btn primary sm" onClick={() => setSigning(true)}>Add signature</button>
+        </div>
+      )}
       <div className="toolbar">
         <div className="search">
           <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden>
@@ -168,7 +191,17 @@ export default function App() {
           ))
         )}
       </main>
+      </>
+      )}
 
+      {signing && (
+        <SignatureModal
+          doctors={boot!.myDoctors}
+          toast={toast.show}
+          onClose={() => setSigning(false)}
+          onSaved={loadBoot}
+        />
+      )}
       {open && (
         <PrescriptionDrawer
           patient={open}

@@ -74,6 +74,7 @@ export function renderPrescriptionHtml(v: PrescriptionView): string {
   .sign img { max-height: 56px; max-width: 200px; display: block; margin: 0 auto 4px; }
   .sign .line { border-top: 1px solid #9fb3b5; padding-top: 6px; font-weight: 700; }
   .sign .sub { color: #51666a; font-size: 11px; }
+  .sign .dsig { margin-top: 5px; font-size: 9.5px; color: #1b8a7a; letter-spacing: .4px; }
   .foot { position: absolute; left: 34px; right: 34px; bottom: 8mm; border-top: 1px solid #e3eeec; padding-top: 8px; font-size: 9.5px; color: #7d9195; display: flex; justify-content: space-between; }
 </style></head>
 <body><div class="page">
@@ -125,6 +126,7 @@ export function renderPrescriptionHtml(v: PrescriptionView): string {
       <div class="line">${esc(v.doctor.display_name)}</div>
       <div class="sub">${esc(v.doctor.role ?? '')}</div>
       <div class="sub">${esc(v.doctor.reg_no ?? '')}</div>
+      ${v.doctor.signature_url ? `<div class="dsig">Digitally signed · ${fmtDate(v.date)}</div>` : ''}
     </div></div>
   </div>
   <div class="foot">

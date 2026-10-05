@@ -7,7 +7,7 @@ import { clearSession, issueSession, requireAdmin, requireAuthorized, requireSes
 import { config } from './config.js';
 import { pool } from './db.js';
 import { HttpError, loadBookingForViewer } from './services/access.js';
-import { listDoctors } from './services/doctors.js';
+import { listDoctors, upsertDoctorByName, validateSignature, type Doctor } from './services/doctors.js';
 import { approveAndSend, latestConsultation, previewPdf, sanitizeInput, saveDraft } from './services/prescriptions.js';
 import { rotateCalWebhookSecret } from './services/settings.js';
 import { formatSummary, importSheetData } from './services/sheetImport.js';
@@ -87,12 +87,16 @@ export function createApp() {
       listDoctors(pool),
       pool.query('select id, name, notes from medicines order by name'),
     ]);
+    // Signatures are large data URLs; the list only says whether one exists.
+    const slim = ({ signature_url, ...d }: Doctor) => ({ ...d, hasSignature: !!signature_url });
+    const mine = new Set(v.doctors.map((d) => d.id));
     res.json({
       authorized: true,
       isAdmin: v.isAdmin,
       email: v.email,
-      doctor: v.doctor,
-      doctors: v.isAdmin ? doctors : doctors.filter((d) => d.id === v.doctor?.id),
+      doctor: v.doctor && slim(v.doctor),
+      myDoctors: v.doctors.map(slim),
+      doctors: (v.isAdmin ? doctors : doctors.filter((d) => mine.has(d.id))).map(slim),
       medicines: meds.rows,
     });
   }));
@@ -112,8 +116,8 @@ export function createApp() {
         where = `where b.doctor_id = $1`;
       }
     } else {
-      params.push(v.doctor!.id);
-      where = `where b.doctor_id = $1`;
+      params.push(v.doctors.map((d) => d.id));
+      where = `where b.doctor_id = any($1::int[])`;
     }
     const { rows } = await pool.query(
       `select b.id as "bookingId", b.cal_uid as "calUid", b.patient_id as "patientId", b.patient_type as "patientType",
@@ -138,7 +142,10 @@ export function createApp() {
     const pid = String(req.params.patientId);
     const exclude = Number(req.query.exclude_booking_id ?? req.query.excludeBookingId ?? 0) || 0;
     if (!v.isAdmin) {
-      const { rowCount } = await pool.query('select 1 from bookings where patient_id=$1 and doctor_id=$2 limit 1', [pid, v.doctor!.id]);
+      const { rowCount } = await pool.query('select 1 from bookings where patient_id=$1 and doctor_id = any($2::int[]) limit 1', [
+        pid,
+        v.doctors.map((d) => d.id),
+      ]);
       if (!rowCount) throw new HttpError(403, 'not your patient');
     }
     const { rows } = await pool.query(
@@ -202,6 +209,112 @@ export function createApp() {
   });
   authed.get('/prescriptions/:bookingId/preview', sendPreview(true));
   authed.post('/prescriptions/:bookingId/preview', sendPreview(true));
+
+
+  // ── Doctor signatures: an admin, or the doctor themself (same login email) ──
+  const canEditDoctor = async (req: Request, doctorId: number) => {
+    const v = req.viewer!;
+    const { rows } = await pool.query<Doctor>('select * from doctors where id=$1', [doctorId]);
+    const d = rows[0];
+    if (!d) throw new HttpError(404, 'doctor not found');
+    if (!v.isAdmin && d.email.toLowerCase() !== v.email.toLowerCase()) throw new HttpError(403, 'not your profile');
+    return d;
+  };
+
+  authed.get('/doctors/:id/signature', h(async (req, res) => {
+    const d = await canEditDoctor(req, Number(req.params.id));
+    res.json({ ok: true, signature: d.signature_url });
+  }));
+
+  authed.put('/doctors/:id/signature', h(async (req, res) => {
+    await canEditDoctor(req, Number(req.params.id));
+    let sig: string | null;
+    try {
+      sig = validateSignature(req.body?.signature);
+    } catch (e: any) {
+      throw new HttpError(400, e.message);
+    }
+    await pool.query('update doctors set signature_url=$2 where id=$1', [Number(req.params.id), sig]);
+    res.json({ ok: true, hasSignature: !!sig });
+  }));
+
+  // ── Admin: doctors ──
+  const doctorBody = (b: any) => {
+    const display_name = String(b?.display_name ?? '').trim();
+    const email = String(b?.email ?? '').trim().toLowerCase();
+    if (!display_name) throw new HttpError(400, 'Name is required');
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) throw new HttpError(400, 'A valid email is required');
+    return {
+      display_name,
+      email,
+      role: String(b?.role ?? '').trim() || null,
+      reg_no: String(b?.reg_no ?? '').trim() || null,
+    };
+  };
+
+  authed.get('/admin/doctors', requireAdmin, h(async (_req, res) => {
+    const { rows } = await pool.query(
+      `select d.id, d.display_name, d.role, d.reg_no, d.email, d.signature_url,
+              (select count(*)::int from bookings b where b.doctor_id = d.id) as bookings
+         from doctors d order by d.display_name`,
+    );
+    res.json({ ok: true, doctors: rows });
+  }));
+
+  authed.post('/admin/doctors', requireAdmin, h(async (req, res) => {
+    const d = doctorBody(req.body);
+    const dup = await pool.query(
+      `select 1 from doctors where regexp_replace(lower(display_name),'[^a-z0-9]','','g') = regexp_replace(lower($1),'[^a-z0-9]','','g')`,
+      [d.display_name],
+    );
+    if (dup.rowCount) throw new HttpError(409, `${d.display_name} already exists — edit that doctor instead.`);
+    await upsertDoctorByName(pool, d);
+    // Link bookings that arrived before this doctor existed.
+    await pool.query(
+      `update bookings b set doctor_id = d.id from doctors d
+        where b.doctor_id is null and d.display_name = $1
+          and regexp_replace(lower(coalesce(b.doctor_name_raw,'')),'[^a-z0-9]','','g') = regexp_replace(lower(d.display_name),'[^a-z0-9]','','g')`,
+      [d.display_name],
+    );
+    res.json({ ok: true });
+  }));
+
+  authed.put('/admin/doctors/:id', requireAdmin, h(async (req, res) => {
+    const d = doctorBody(req.body);
+    const r = await pool.query('update doctors set display_name=$2, role=$3, reg_no=$4, email=$5 where id=$1', [
+      Number(req.params.id), d.display_name, d.role, d.reg_no, d.email,
+    ]);
+    if (!r.rowCount) throw new HttpError(404, 'doctor not found');
+    res.json({ ok: true });
+  }));
+
+  authed.delete('/admin/doctors/:id', requireAdmin, h(async (req, res) => {
+    const id = Number(req.params.id);
+    const { rows } = await pool.query<{ n: number }>(
+      'select (select count(*) from bookings where doctor_id=$1) + (select count(*) from consultations where doctor_id=$1) as n',
+      [id],
+    );
+    if (Number(rows[0].n) > 0) throw new HttpError(409, 'This doctor has bookings or prescriptions and can’t be deleted. Edit them instead.');
+    await pool.query('delete from doctors where id=$1', [id]);
+    res.json({ ok: true });
+  }));
+
+  // ── Admin: medicines ──
+  authed.post('/admin/medicines', requireAdmin, h(async (req, res) => {
+    const name = String(req.body?.name ?? '').trim();
+    if (!name) throw new HttpError(400, 'Name is required');
+    const { rowCount } = await pool.query('select 1 from medicines where lower(name)=lower($1)', [name]);
+    if (rowCount) throw new HttpError(409, `${name} is already in the list`);
+    const { rows } = await pool.query('insert into medicines(name, notes) values ($1,$2) returning id, name, notes', [
+      name, String(req.body?.notes ?? '').trim() || null,
+    ]);
+    res.json({ ok: true, medicine: rows[0] });
+  }));
+
+  authed.delete('/admin/medicines/:id', requireAdmin, h(async (req, res) => {
+    await pool.query('delete from medicines where id=$1', [Number(req.params.id)]);
+    res.json({ ok: true });
+  }));
 
   // ── Admin ──
   authed.post('/admin/import-csv', requireAdmin, h(async (req, res) => {

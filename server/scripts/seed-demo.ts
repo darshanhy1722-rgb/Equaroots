@@ -5,7 +5,7 @@
 import { pool, withTransaction } from '../src/db.js';
 import { runMigrations } from '../src/migrate.js';
 import { mapCalPayload } from '../src/services/calPayload.js';
-import { listDoctors, matchDoctor } from '../src/services/doctors.js';
+import { listDoctors, matchDoctor, upsertDoctorByName } from '../src/services/doctors.js';
 import { assignPatientIdsAndFlags } from '../src/services/patientIds.js';
 
 await runMigrations(pool);
@@ -39,11 +39,7 @@ const bookings = [
 
 await withTransaction(async (c) => {
   for (const [n, r, reg, e] of doctors) {
-    await c.query(
-      `insert into doctors(display_name, role, reg_no, email) values ($1,$2,$3,$4)
-       on conflict (email) do update set display_name=excluded.display_name, role=excluded.role, reg_no=excluded.reg_no`,
-      [n, r, reg, e],
-    );
+    await upsertDoctorByName(c, { display_name: n, role: r, reg_no: reg, email: e });
   }
   const { rowCount } = await c.query('select 1 from medicines limit 1');
   if (!rowCount) for (const [n, notes] of medicines) await c.query('insert into medicines(name, notes) values ($1,$2)', [n, notes]);

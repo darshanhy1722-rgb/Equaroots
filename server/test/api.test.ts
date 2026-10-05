@@ -40,6 +40,10 @@ const booking = (uid: string, name: string, email: string, phone: string, organi
 beforeAll(async () => {
   await pool.query('drop schema public cascade; create schema public;');
   await runMigrations(pool, () => {});
+  // Migration 002 seeds the live roster; verify it, then use our own fixtures.
+  const roster = (await pool.query('select display_name, email from doctors order by id')).rows;
+  expect(roster.map((r) => r.display_name)).toEqual(['Dr Radha Dangaich', 'Dr Kshitij Srivastava', 'Dr. Abhinav Pandey']);
+  await pool.query('delete from doctors');
   await pool.query(`insert into doctors(display_name, role, reg_no, email) values
     ('Dr Radha Dangaich', 'MD Psychiatry (NIMHANS)', 'Reg No DMC/R/25251', 'radha@equaroots.com'),
     ('Dr Arjun Menon', 'MD Psychiatry', 'Reg No KMC/1', 'arjun@equaroots.com')`);
@@ -230,5 +234,62 @@ describe('admin endpoints', () => {
     expect(res.summary.consultations.inserted).toBe(1);
     const b = (await pool.query("select patient_id, patient_type, d.email from bookings b join doctors d on d.id=b.doctor_id where cal_uid='old-1'")).rows[0];
     expect(b).toEqual({ patient_id: 'PAT-050', patient_type: 'Existing', email: 'kavya@equaroots.com' });
+  });
+});
+
+describe('shared doctor emails + digital signatures', () => {
+  const PNG = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==';
+
+  it('admin can add doctors sharing an email; webhook resolves them by name', async () => {
+    const admin = await agentFor('admin@example.com');
+    await admin.post('/api/admin/doctors').send({ display_name: 'Dr Asha One', role: 'MD', reg_no: 'R1', email: 'hello@clinic.com' }).expect(200);
+    await admin.post('/api/admin/doctors').send({ display_name: 'Dr. Bina Two', role: 'MD', reg_no: 'R2', email: 'hello@clinic.com' }).expect(200);
+    await admin.post('/api/admin/doctors').send({ display_name: 'Dr Asha One', email: 'x@y.com' }).expect(409);
+    await admin.post('/api/admin/doctors').send({ display_name: '', email: 'x@y.com' }).expect(400);
+
+    await calEvent('BOOKING_CREATED', booking('s1', 'Pat A', 'pa@x.com', '9000000001', { name: 'Dr Bina Two', email: 'hello@clinic.com' }, 11)).expect(200);
+    await calEvent('BOOKING_CREATED', booking('s2', 'Pat B', 'pb@x.com', '9000000002', { name: 'Dr. Asha One', email: 'hello@clinic.com' }, 12)).expect(200);
+    const r = (await pool.query("select b.cal_uid, d.display_name from bookings b join doctors d on d.id=b.doctor_id where cal_uid in ('s1','s2') order by cal_uid")).rows;
+    expect(r).toEqual([{ cal_uid: 's1', display_name: 'Dr. Bina Two' }, { cal_uid: 's2', display_name: 'Dr Asha One' }]);
+
+    // the shared login sees both doctors' patients
+    const shared = await agentFor('hello@clinic.com');
+    const boot = (await shared.get('/api/bootstrap').expect(200)).body;
+    expect(boot.myDoctors.map((d: any) => d.display_name).sort()).toEqual(['Dr Asha One', 'Dr. Bina Two']);
+    const pts = (await shared.get('/api/patients')).body.patients.map((p: any) => p.calUid).sort();
+    expect(pts).toEqual(['s1', 's2']);
+  });
+
+  it('doctor sets own signature; others cannot; PDF shows it', async () => {
+    const radhaId = (await pool.query("select id from doctors where email='radha@equaroots.com'")).rows[0].id;
+    const arjun = await agentFor('arjun@equaroots.com');
+    await arjun.put(`/api/doctors/${radhaId}/signature`).send({ signature: PNG }).expect(403);
+    const radha = await agentFor('radha@equaroots.com');
+    await radha.put(`/api/doctors/${radhaId}/signature`).send({ signature: 'javascript:alert(1)' }).expect(400);
+    await radha.put(`/api/doctors/${radhaId}/signature`).send({ signature: PNG }).expect(200);
+    expect((await radha.get(`/api/doctors/${radhaId}/signature`).expect(200)).body.signature).toBe(PNG);
+    const boot = (await radha.get('/api/bootstrap')).body;
+    expect(boot.doctor.hasSignature).toBe(true);
+    expect(boot.doctor.signature_url).toBeUndefined();
+
+    const { renderPrescriptionHtml } = await import('../src/services/prescriptionTemplate.js');
+    const html = renderPrescriptionHtml({
+      prescriptionId: 'RX-1', date: new Date(), impression: '', advice: '', medicines: [],
+      doctor: { display_name: 'Dr X', role: null, reg_no: null, signature_url: PNG },
+      patient: { name: 'P', patientId: null, age: null, gender: null, phone: null, email: null, consultationAt: null },
+    });
+    expect(html).toContain(PNG);
+    expect(html).toContain('Digitally signed');
+  });
+
+  it('admin edits a doctor and cannot delete one with bookings', async () => {
+    const admin = await agentFor('admin@example.com');
+    const docs = (await admin.get('/api/admin/doctors').expect(200)).body.doctors;
+    const asha = docs.find((d: any) => d.display_name === 'Dr Asha One');
+    await admin.put(`/api/admin/doctors/${asha.id}`).send({ ...asha, reg_no: 'Reg No DMC/R/99999' }).expect(200);
+    expect((await pool.query('select reg_no from doctors where id=$1', [asha.id])).rows[0].reg_no).toBe('Reg No DMC/R/99999');
+    await admin.delete(`/api/admin/doctors/${asha.id}`).expect(409);
+    const radha = await agentFor('radha@equaroots.com');
+    await radha.get('/api/admin/doctors').expect(403);
   });
 });

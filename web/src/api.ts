@@ -4,6 +4,19 @@ export interface Doctor {
   role: string | null;
   reg_no: string | null;
   email: string;
+  hasSignature?: boolean;
+}
+export interface AdminDoctor extends Doctor {
+  signature_url: string | null;
+  bookings: number;
+}
+export interface WebhookLog {
+  id: number;
+  receivedAt: string;
+  ok: boolean;
+  triggerEvent: string | null;
+  calUid: string | null;
+  note: string | null;
 }
 export interface Medicine {
   id: number;
@@ -15,6 +28,7 @@ export interface Bootstrap {
   isAdmin: boolean;
   email: string;
   doctor: Doctor | null;
+  myDoctors: Doctor[];
   doctors: Doctor[];
   medicines: Medicine[];
 }
@@ -104,6 +118,23 @@ export const api = {
       method: 'POST',
       body: JSON.stringify(body),
     }),
+  getSignature: (doctorId: number) =>
+    req<{ signature: string | null }>(`/api/doctors/${doctorId}/signature`).then((r) => r.signature),
+  setSignature: (doctorId: number, signature: string | null) =>
+    req(`/api/doctors/${doctorId}/signature`, { method: 'PUT', body: JSON.stringify({ signature }) }),
+  adminDoctors: () => req<{ doctors: AdminDoctor[] }>('/api/admin/doctors').then((r) => r.doctors),
+  createDoctor: (d: Partial<Doctor>) => req('/api/admin/doctors', { method: 'POST', body: JSON.stringify(d) }),
+  updateDoctor: (id: number, d: Partial<Doctor>) =>
+    req(`/api/admin/doctors/${id}`, { method: 'PUT', body: JSON.stringify(d) }),
+  deleteDoctor: (id: number) => req(`/api/admin/doctors/${id}`, { method: 'DELETE' }),
+  addMedicine: (name: string, notes: string) =>
+    req<{ medicine: Medicine }>('/api/admin/medicines', { method: 'POST', body: JSON.stringify({ name, notes }) }).then(
+      (r) => r.medicine,
+    ),
+  deleteMedicine: (id: number) => req(`/api/admin/medicines/${id}`, { method: 'DELETE' }),
+  webhookLogs: () => req<{ logs: WebhookLog[] }>('/api/admin/webhook-logs?limit=100').then((r) => r.logs),
+  importCsv: (files: Record<string, string>) =>
+    req<{ text: string }>('/api/admin/import-csv', { method: 'POST', body: JSON.stringify(files) }).then((r) => r.text),
   async preview(bookingId: number, body: { impression: string; advice: string; medicines: MedLine[] }): Promise<Blob> {
     const res = await fetch(`/api/prescriptions/${bookingId}/preview`, {
       method: 'POST',

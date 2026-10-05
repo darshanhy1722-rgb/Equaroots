@@ -1,7 +1,7 @@
 import { parse } from 'csv-parse/sync';
 import type { Queryable } from '../db.js';
 import { generatePrescriptionId, normalizeName } from '../lib/normalize.js';
-import { listDoctors, matchDoctor } from './doctors.js';
+import { listDoctors, matchDoctor, upsertDoctorByName } from './doctors.js';
 
 /**
  * Imports the old Google Sheet tabs (exported as CSV). Header names are matched
@@ -79,14 +79,15 @@ export async function importSheetData(db: Queryable, csv: SheetCsvs): Promise<Im
       s.doctors.skipped.push(`row ${i + 2}: missing ${!email ? 'email' : 'name'}`);
       continue;
     }
-    const res = await db.query<{ inserted: boolean }>(
-      `insert into doctors(display_name, role, reg_no, signature_url, email) values ($1,$2,$3,$4,$5)
-       on conflict (email) do update set display_name=excluded.display_name, role=excluded.role,
-         reg_no=excluded.reg_no, signature_url=coalesce(excluded.signature_url, doctors.signature_url)
-       returning (xmax = 0) as inserted`,
-      [name, get(r, 'role', 'qualification', 'degree'), get(r, 'reg no', 'registration', 'reg'), get(r, 'signature url', 'signature'), email],
-    );
-    res.rows[0].inserted ? s.doctors.inserted++ : s.doctors.updated++;
+    const sig = get(r, 'signature url', 'signature');
+    const how = await upsertDoctorByName(db, {
+      display_name: name,
+      role: get(r, 'role', 'qualification', 'degree'),
+      reg_no: get(r, 'reg no', 'registration', 'reg'),
+      email,
+    });
+    if (sig) await db.query('update doctors set signature_url=$1 where regexp_replace(lower(display_name),\'[^a-z0-9]\',\'\',\'g\')=$2', [sig, normalizeName(name)]);
+    how === 'inserted' ? s.doctors.inserted++ : s.doctors.updated++;
   }
 
   // 2. Medicines
