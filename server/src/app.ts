@@ -30,10 +30,11 @@ export function createApp() {
     next();
   });
 
-  app.get('/healthz', h(async (_req, res) => {
-    await pool.query('select 1');
-    res.json({ ok: true });
-  }));
+  // Liveness for the platform healthcheck; reports DB status without failing on it.
+  app.get('/healthz', async (_req, res) => {
+    const db = await pool.query('select 1').then(() => true, () => false);
+    res.json({ ok: true, db });
+  });
 
   // ── Cal.id webhook: raw body, HMAC verified before parsing (spec §7) ──
   app.post('/api/webhooks/cal', express.raw({ type: '*/*', limit: '2mb' }), h(async (req, res) => {
