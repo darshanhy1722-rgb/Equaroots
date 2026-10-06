@@ -92,6 +92,30 @@ export interface HistoryItem {
   pdfUrl: string | null;
 }
 
+export interface SentRx {
+  bookingId: number;
+  consultationId: number | null;
+  prescriptionId: string | null;
+  patientName: string;
+  patientId: string | null;
+  email: string | null;
+  phone: string | null;
+  age: string | null;
+  gender: string | null;
+  doctorId: number | null;
+  doctorName: string | null;
+  consultationAt: string | null;
+  consultationEnd: string | null;
+  sentAt: string | null;
+  impression: string | null;
+  progression: string | null;
+  advice: string | null;
+  medicines: MedLine[] | null;
+  hasPdf: boolean;
+  externalPdfUrl: string | null;
+  imported: boolean;
+}
+
 export class ApiError extends Error {
   constructor(public status: number, message: string, public body?: any) {
     super(message);
@@ -118,6 +142,9 @@ export const api = {
   bootstrap: () => req<Bootstrap>('/api/bootstrap'),
   patients: (doctorId?: number | null) =>
     req<{ patients: Patient[] }>(`/api/patients${doctorId ? `?doctor_id=${doctorId}` : ''}`).then((r) => r.patients),
+  sentPrescriptions: (doctorId?: number | null) =>
+    req<{ prescriptions: SentRx[] }>(`/api/prescriptions${doctorId ? `?doctor_id=${doctorId}` : ''}`).then((r) => r.prescriptions),
+  pdfUrl: (bookingId: number, download = false) => `/api/bookings/${bookingId}/pdf${download ? '?download=1' : ''}`,
   draft: (bookingId: number) =>
     req<{ draft: Draft | null; pdfUrl: string | null }>(`/api/bookings/${bookingId}/draft`),
   history: (patientId: string, excludeBookingId: number) =>

@@ -187,6 +187,71 @@ export function createApp() {
     });
   }));
 
+  // ── Sent prescriptions (the "Prescriptions" tab) ──
+  // Every booking with a sent prescription — from the dashboard, or imported from the old Sheet
+  // ("Prescription Sent" + Drive link) — newest first, with the full prescription content.
+  authed.get('/prescriptions', h(async (req, res) => {
+    const v = req.viewer!;
+    const params: unknown[] = [];
+    const where: string[] = [`(c.id is not null or b.status = 'Prescription Sent')`];
+    if (v.isAdmin) {
+      const did = Number(req.query.doctor_id);
+      if (req.query.doctor_id && Number.isInteger(did)) {
+        params.push(did);
+        where.push(`b.doctor_id = $${params.length}`);
+      }
+    } else {
+      params.push(v.doctors.map((d) => d.id));
+      where.push(`b.doctor_id = any($${params.length}::int[])`);
+    }
+    const { rows } = await pool.query(
+      `select b.id as "bookingId", c.id as "consultationId", c.prescription_id as "prescriptionId",
+              coalesce(c.patient_name, b.patient_name) as "patientName", coalesce(b.patient_id, c.patient_uid) as "patientId",
+              coalesce(c.email, b.patient_email) as email, coalesce(c.phone, b.patient_phone) as phone,
+              coalesce(c.age, b.age) as age, coalesce(c.gender, b.gender) as gender,
+              coalesce(b.doctor_id, c.doctor_id) as "doctorId", coalesce(dc.display_name, db.display_name, b.doctor_name_raw) as "doctorName",
+              b.start_time as "consultationAt", b.end_time as "consultationEnd",
+              coalesce(c.approved_at, c.updated_at, b.updated_at) as "sentAt",
+              c.impression, c.progression, c.advice, c.medicines_json as medicines,
+              coalesce(c.pdf_url, b.pdf_url) as "pdfRef", (c.id is null) as imported
+         from bookings b
+         left join lateral (select * from consultations where booking_id = b.id and status = 'Sent'
+                             order by approved_at desc nulls last, id desc limit 1) c on true
+         left join doctors dc on dc.id = c.doctor_id
+         left join doctors db on db.id = b.doctor_id
+        where ${where.join(' and ')}
+        order by coalesce(c.approved_at, b.start_time, b.updated_at) desc nulls last, b.id desc`,
+      params,
+    );
+    res.json({
+      ok: true,
+      prescriptions: rows.map(({ pdfRef, ...r }) => ({
+        ...r,
+        hasPdf: !!pdfRef,
+        // Drive links from the old Sheet open directly; stored PDFs go through the signed redirect.
+        externalPdfUrl: pdfRef && /^https?:/.test(pdfRef) ? pdfRef : null,
+      })),
+    });
+  }));
+
+  // Redirects to a short-lived link for a booking's sent prescription PDF (?download=1 to save it).
+  authed.get('/bookings/:bookingId/pdf', h(async (req, res) => {
+    const b = await loadBookingForViewer(pool, req.viewer!, Number(req.params.bookingId));
+    const c = (
+      await pool.query<{ pdf_url: string | null; prescription_id: string | null }>(
+        `select pdf_url, prescription_id from consultations where booking_id=$1 and pdf_url is not null
+          order by approved_at desc nulls last, id desc limit 1`,
+        [b.id],
+      )
+    ).rows[0];
+    const ref = c?.pdf_url ?? b.pdf_url;
+    if (!ref) throw new HttpError(404, 'No prescription PDF for this booking');
+    if (/^https?:/.test(ref)) return res.redirect(302, ref);
+    const name = `${c?.prescription_id ?? 'prescription'}-${(b.patient_name || 'patient').replace(/[^\w]+/g, '_')}.pdf`;
+    res.setHeader('Cache-Control', 'no-store');
+    res.redirect(302, await signedPdfUrl(ref, req.query.download ? { download: name } : {}));
+  }));
+
   // ── Prescriptions ──
   authed.post('/prescriptions', h(async (req, res) => {
     const action = String(req.query.action ?? req.body?.action ?? 'draft');
@@ -410,7 +475,8 @@ export function createApp() {
     const buf = await readLocalSigned(k, String(req.query.exp ?? ''), String(req.query.sig ?? ''));
     if (!buf) return res.status(403).send('Link expired or invalid');
     res.setHeader('Content-Type', 'application/pdf');
-    res.setHeader('Content-Disposition', `inline; filename="${path.basename(k)}"`);
+    const dl = typeof req.query.dl === 'string' ? req.query.dl.replace(/[^\w.\- ]/g, '') : '';
+    res.setHeader('Content-Disposition', dl ? `attachment; filename="${dl}"` : `inline; filename="${path.basename(k)}"`);
     res.setHeader('Cache-Control', 'private, no-store');
     res.send(buf);
   }));

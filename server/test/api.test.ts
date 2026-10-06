@@ -465,3 +465,44 @@ describe('patient register (ER IDs)', () => {
     await radha.post('/api/admin/import-patient-register').send({ table }).expect(403);
   });
 });
+
+describe('Prescriptions tab (sent prescriptions)', () => {
+  it('lists sent prescriptions with full details, scoped per doctor; admin sees all incl. Sheet imports', async () => {
+    const radha = await agentFor('radha@equaroots.com');
+    const mine = (await radha.get('/api/prescriptions').expect(200)).body.prescriptions;
+    expect(mine.length).toBeGreaterThanOrEqual(1);
+    const c1 = mine.find((r: any) => r.impression === 'GAD');
+    expect(c1).toMatchObject({ doctorName: 'Dr Radha Dangaich', email: 'asha@x.com', hasPdf: true, imported: false, externalPdfUrl: null });
+    expect(c1.prescriptionId).toMatch(/^RX-\d{10}$/);
+    expect(c1.medicines[0]).toMatchObject({ name: 'Escitalopram 10mg' });
+    expect(mine.every((r: any) => r.doctorName === 'Dr Radha Dangaich')).toBe(true);
+
+    const arjun = await agentFor('arjun@equaroots.com');
+    expect((await arjun.get('/api/prescriptions').expect(200)).body.prescriptions.some((r: any) => r.bookingId === c1.bookingId)).toBe(false);
+
+    const admin = await agentFor('admin@example.com');
+    const all = (await admin.get('/api/prescriptions').expect(200)).body.prescriptions;
+    const imported = all.find((r: any) => r.externalPdfUrl === 'https://drive.google.com/file/d/abc/view');
+    expect(imported).toMatchObject({ imported: true, hasPdf: true, patientName: 'Test One' });
+    expect(all.length).toBeGreaterThan(mine.length);
+  });
+
+  it('PDF link redirects to a working short-lived file (inline or download), only for allowed users', async () => {
+    const radha = await agentFor('radha@equaroots.com');
+    const c1 = (await radha.get('/api/prescriptions')).body.prescriptions.find((r: any) => r.impression === 'GAD');
+    const r = await radha.get(`/api/bookings/${c1.bookingId}/pdf`).expect(302);
+    const u = new URL(r.headers.location);
+    const file = await request(app).get(u.pathname + u.search).expect(200).expect('Content-Type', 'application/pdf');
+    expect(file.headers['content-disposition']).toMatch(/^inline/);
+    const d = await radha.get(`/api/bookings/${c1.bookingId}/pdf?download=1`).expect(302);
+    const du = new URL(d.headers.location);
+    const dfile = await request(app).get(du.pathname + du.search).expect(200);
+    expect(dfile.headers['content-disposition']).toMatch(/^attachment; filename="RX-\d{10}-Asha_Rao\.pdf"$/);
+    const arjun = await agentFor('arjun@equaroots.com');
+    await arjun.get(`/api/bookings/${c1.bookingId}/pdf`).expect(403);
+    // Sheet-imported Drive link: plain redirect to Drive
+    const admin = await agentFor('admin@example.com');
+    const imp = (await admin.get('/api/prescriptions')).body.prescriptions.find((x: any) => x.imported && x.externalPdfUrl);
+    expect((await admin.get(`/api/bookings/${imp.bookingId}/pdf`).expect(302)).headers.location).toBe(imp.externalPdfUrl);
+  });
+});

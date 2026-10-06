@@ -49,14 +49,19 @@ function localSig(key: string, exp: number) {
   return crypto.createHmac('sha256', config.sessionSecret).update(`${key}:${exp}`).digest('hex');
 }
 
-export async function signedPdfUrl(key: string): Promise<string> {
+/** Short-lived link to a stored PDF. `download` makes the browser save it under that name. */
+export async function signedPdfUrl(key: string, opts: { download?: string } = {}): Promise<string> {
+  const disposition = opts.download ? `attachment; filename="${opts.download.replace(/"/g, '')}"` : undefined;
   if (s3) {
-    return getSignedUrl(s3, new GetObjectCommand({ Bucket: config.storage.bucket, Key: key }), {
-      expiresIn: SIGNED_URL_TTL_S,
-    });
+    return getSignedUrl(
+      s3,
+      new GetObjectCommand({ Bucket: config.storage.bucket, Key: key, ResponseContentDisposition: disposition }),
+      { expiresIn: SIGNED_URL_TTL_S },
+    );
   }
   const exp = Math.floor(Date.now() / 1000) + SIGNED_URL_TTL_S;
-  return `${config.appBaseUrl}/files/${encodeURI(key)}?exp=${exp}&sig=${localSig(key, exp)}`;
+  const dl = opts.download ? `&dl=${encodeURIComponent(opts.download)}` : '';
+  return `${config.appBaseUrl}/files/${encodeURI(key)}?exp=${exp}&sig=${localSig(key, exp)}${dl}`;
 }
 
 /** Validates a local signed URL and returns the file bytes, or null. */

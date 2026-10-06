@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { api, ApiError, type Bootstrap, type Patient } from './api';
 import { AdminPage } from './components/AdminPage';
+import { RxSentPage } from './components/RxSentPage';
 import { Login, NotSetUp } from './components/Login';
 import { PatientCard } from './components/PatientCard';
 import { PrescriptionDrawer } from './components/PrescriptionDrawer';
@@ -27,7 +28,7 @@ export default function App() {
   const [filter, setFilter] = useState<Filter>('all');
   const [doctorId, setDoctorId] = useState<number | null>(null);
   const [open, setOpen] = useState<Patient | null>(null);
-  const [page, setPage] = useState<'patients' | 'admin'>('patients');
+  const [page, setPage] = useState<'patients' | 'rx' | 'admin'>('patients');
   const [signing, setSigning] = useState(false);
   const [when, setWhen] = useState<WhenFilter>('all');
   const [now, setNow] = useState(() => Date.now());
@@ -180,12 +181,13 @@ export default function App() {
             </div>
           </div>
         </div>
-        {boot!.isAdmin && (
-          <nav className="nav">
-            <button className={page === 'patients' ? 'on' : ''} onClick={() => setPage('patients')}>Patients</button>
+        <nav className="nav">
+          <button className={page === 'patients' ? 'on' : ''} onClick={() => setPage('patients')}>Patients</button>
+          <button className={page === 'rx' ? 'on' : ''} onClick={() => setPage('rx')}>Prescriptions</button>
+          {boot!.isAdmin && (
             <button className={page === 'admin' ? 'on' : ''} onClick={() => setPage('admin')}>Admin tools</button>
-          </nav>
-        )}
+          )}
+        </nav>
         <div className="who">
           {boot!.myDoctors.length > 0 && (
             <button className="btn ghost sm" onClick={() => setSigning(true)}>✍︎ My letterhead</button>
@@ -202,6 +204,8 @@ export default function App() {
 
       {page === 'admin' && boot!.isAdmin ? (
         <AdminPage toast={toast.show} onDataChanged={loadBoot} />
+      ) : page === 'rx' ? (
+        <RxSentPage isAdmin={boot!.isAdmin} doctors={boot!.doctors} toast={toast.show} />
       ) : (
       <>
       {boot!.myDoctors.some((d) => !d.hasSignature) && (
