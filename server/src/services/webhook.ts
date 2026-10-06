@@ -3,7 +3,7 @@ import { verifyCalSignature } from '../lib/signature.js';
 import { mapCalPayload } from './calPayload.js';
 import { listDoctors, matchDoctor } from './doctors.js';
 import { assignPatientIdsAndFlags } from './patientIds.js';
-import { getCalWebhookSecret } from './settings.js';
+import { getCalWebhookSecrets, secretHint } from './settings.js';
 
 export interface WebhookResult {
   status: number;
@@ -26,11 +26,16 @@ function tryParse(raw: Buffer): any {
 }
 
 export async function handleCalWebhook(raw: Buffer, signature: string | undefined): Promise<WebhookResult> {
-  const secret = await getCalWebhookSecret(pool);
-  if (!verifyCalSignature(raw, signature, secret)) {
+  const secrets = await getCalWebhookSecrets(pool);
+  if (!secrets.some((s) => verifyCalSignature(raw, signature, s))) {
     const parsed = tryParse(raw);
-    await log(pool, false, parsed?.triggerEvent ?? null, parsed?.payload?.uid ?? null,
-      secret ? 'rejected: bad or missing X-Cal-Signature-256' : 'rejected: CAL_WEBHOOK_SECRET not configured', parsed);
+    const note = !secrets.length
+      ? 'rejected: CAL_WEBHOOK_SECRET is not set on the server'
+      : !signature
+        ? 'rejected: no X-Cal-Signature-256 header — the Secret field in this Cal.id webhook is empty'
+        : `rejected: signature doesn't match — the Secret in this Cal.id webhook differs from the server's. ` +
+          `Server accepts ${secrets.map(secretHint).join(', ')}; paste one of those exactly (or add this webhook's secret to CAL_WEBHOOK_SECRET, comma-separated).`;
+    await log(pool, false, parsed?.triggerEvent ?? null, parsed?.payload?.uid ?? null, note, parsed);
     return { status: 401, body: { ok: false, error: 'invalid signature' } };
   }
 

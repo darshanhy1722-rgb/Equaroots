@@ -64,6 +64,10 @@ describe('Cal.id webhook', () => {
     const { rows } = await pool.query('select ok, note from webhook_logs order by id');
     expect(rows).toHaveLength(2);
     expect(rows.every((r) => r.ok === false)).toBe(true);
+    expect(rows[0].note).toContain("signature doesn't match");
+    expect(rows[0].note).toContain('"test…" (11 chars)');
+    expect(rows[0].note).not.toContain('test-secret');
+    expect(rows[1].note).toContain('Secret field in this Cal.id webhook is empty');
     expect((await pool.query("select 1 from bookings where cal_uid='evil'")).rowCount).toBe(0);
   });
 
@@ -92,6 +96,22 @@ describe('Cal.id webhook', () => {
     await calEvent('PING', {}).expect(200);
     const last = await pool.query('select ok, trigger_event from webhook_logs order by id desc limit 1');
     expect(last.rows[0]).toEqual({ ok: true, trigger_event: 'PING' });
+  });
+});
+
+describe('multiple webhook secrets', () => {
+  it('accepts any secret listed in CAL_WEBHOOK_SECRET (comma-separated)', async () => {
+    const { config } = await import('../src/config.js');
+    const before = config.calWebhookSecret;
+    config.calWebhookSecret = 'test-secret, team-secret ';
+    try {
+      const raw = JSON.stringify({ triggerEvent: 'PING', payload: {} });
+      await request(app).post('/api/webhooks/cal').set('X-Cal-Signature-256', signBody(raw, 'team-secret')).send(raw).expect(200);
+      await request(app).post('/api/webhooks/cal').set('X-Cal-Signature-256', signBody(raw, 'test-secret')).send(raw).expect(200);
+      await request(app).post('/api/webhooks/cal').set('X-Cal-Signature-256', signBody(raw, 'nope')).send(raw).expect(401);
+    } finally {
+      config.calWebhookSecret = before;
+    }
   });
 });
 

@@ -4,10 +4,21 @@ import type { Queryable } from '../db.js';
 
 const CAL_SECRET_KEY = 'cal_webhook_secret';
 
-/** Rotated secret (DB) wins over the env var, so /api/admin/reassign-token takes effect without a redeploy. */
-export async function getCalWebhookSecret(db: Queryable): Promise<string> {
+/**
+ * Every secret a Cal.id webhook may be signed with: CAL_WEBHOOK_SECRET, which may
+ * list several comma-separated values (e.g. one per Cal.id account or team
+ * webhook), or, once rotated via /api/admin/reassign-token, only the rotated one.
+ */
+export async function getCalWebhookSecrets(db: Queryable): Promise<string[]> {
   const { rows } = await db.query<{ value: string }>('select value from app_settings where key=$1', [CAL_SECRET_KEY]);
-  return rows[0]?.value || config.calWebhookSecret;
+  // A rotated secret replaces the env ones, so rotating really retires the old secret.
+  if (rows[0]?.value) return [rows[0].value];
+  return [...new Set(config.calWebhookSecret.split(',').map((s) => s.trim()).filter(Boolean))];
+}
+
+/** Safe hint for the webhook log: first 4 characters + length, never the whole secret. */
+export function secretHint(secret: string): string {
+  return `"${secret.slice(0, 4)}…" (${secret.length} chars)`;
 }
 
 export async function rotateCalWebhookSecret(db: Queryable): Promise<string> {
