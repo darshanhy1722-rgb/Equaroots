@@ -1,7 +1,8 @@
 :root {
-  --brand: #0f5c56;
-  --brand-2: #1b8a7a;
-  --brand-soft: #e6f2f0;
+  --brand: #1e421e;
+  --brand-2: #3f7a45;
+  --brand-soft: #e8f0e6;
+  --gold: #e9b84a;
   --bg: #f5f7f7;
   --surface: #ffffff;
   --text: #1f2a2e;
@@ -36,7 +37,7 @@ a { color: var(--brand-2); }
 .btn { border: 1px solid transparent; border-radius: 9px; padding: 9px 16px; cursor: pointer; font-weight: 600; transition: background .15s, border-color .15s; }
 .btn:disabled { opacity: .5; cursor: not-allowed; }
 .btn.primary { background: var(--brand); color: #fff; }
-.btn.primary:hover:not(:disabled) { background: #0c4c47; }
+.btn.primary:hover:not(:disabled) { background: #163416; }
 .btn.ghost { background: var(--surface); border-color: var(--line); }
 .btn.ghost:hover:not(:disabled) { border-color: #c4d3d1; background: #fafcfc; }
 .btn.sm { padding: 6px 12px; font-size: 13px; }
@@ -197,3 +198,8 @@ textarea:focus, .med-row input:focus { border-color: var(--brand-2); box-shadow:
   .admin { margin: 0; padding: 14px 16px; }
   .panel-head { flex-direction: column; }
 }
+
+.auth-logo { width: 220px; height: auto; margin-bottom: 4px; }
+.opt { font-style: normal; font-weight: 400; text-transform: none; letter-spacing: 0; color: var(--muted); font-size: 12px; }
+.topbar { border-bottom: 3px solid #566f5a; }
+.brand-name { font-family: Georgia, 'Times New Roman', serif; font-style: italic; font-weight: 800; letter-spacing: .6px; text-transform: uppercase; }

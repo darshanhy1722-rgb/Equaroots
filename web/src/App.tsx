@@ -221,17 +221,6 @@ export function isPendingRx(p: Patient) {
   return p.status !== 'CANCELLED' && p.status !== 'Prescription Sent' && p.rxStatus !== 'Sent';
 }
 
-export function Logo() {
-  return (
-    <svg viewBox="0 0 32 32" width="34" height="34" aria-hidden>
-      <rect width="32" height="32" rx="9" fill="#0f5c56" />
-      <path
-        d="M16 25V13m0 0c0-4 3-6 7-6 0 4-3 6-7 6zm0 3c0-3-2.5-5-6-5 0 3 2.5 5 6 5z"
-        stroke="#fff"
-        strokeWidth="2"
-        fill="none"
-        strokeLinecap="round"
-      />
-    </svg>
-  );
+export function Logo({ size = 40 }: { size?: number }) {
+  return <img src="/favicon.svg" width={size} height={size * 0.68} alt="EquaRoots" style={{ objectFit: 'contain' }} />;
 }

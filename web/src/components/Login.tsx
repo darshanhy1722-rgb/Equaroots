@@ -47,8 +47,7 @@ export function Login({ onSignedIn }: { onSignedIn: () => void }) {
   return (
     <div className="auth">
       <div className="auth-card">
-        <Logo />
-        <h1>EquaRoots</h1>
+        <img src="/logo.svg" alt="EquaRoots — everyday calm & clarity" className="auth-logo" />
         <p className="muted">Doctor Dashboard — sign in with your Google account.</p>
         {cfg?.googleClientId ? (
           <div ref={btn} className="gbtn" />

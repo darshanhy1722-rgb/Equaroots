@@ -145,10 +145,10 @@ describe('prescriptions', () => {
       bookingId: c1, impression: 'GAD', advice: 'Sleep', medicines: [{ name: 'Escitalopram 10mg', dosage: '1 tab', frequency: 'OD', duration: '4 weeks' }],
     }).expect(200)).body;
     expect(first.prescriptionId).toMatch(/^RX-\d{10}$/);
-    const second = (await radha.post('/api/prescriptions?action=draft').send({ bookingId: c1, impression: 'GAD, moderate' }).expect(200)).body;
+    const second = (await radha.post('/api/prescriptions?action=draft').send({ bookingId: c1, impression: 'GAD, moderate', progression: 'Sleep better' }).expect(200)).body;
     expect(second.prescriptionId).toBe(first.prescriptionId);
     const d = (await radha.get(`/api/bookings/${c1}/draft`).expect(200)).body.draft;
-    expect(d).toMatchObject({ status: 'Draft', impression: 'GAD, moderate', prescriptionId: first.prescriptionId });
+    expect(d).toMatchObject({ status: 'Draft', impression: 'GAD, moderate', progression: 'Sleep better', prescriptionId: first.prescriptionId });
     expect((await pool.query('select count(*)::int as n from consultations where booking_id=$1', [c1])).rows[0].n).toBe(1);
   });
 
@@ -286,8 +286,9 @@ describe('shared doctor emails + digital signatures', () => {
     const admin = await agentFor('admin@example.com');
     const docs = (await admin.get('/api/admin/doctors').expect(200)).body.doctors;
     const asha = docs.find((d: any) => d.display_name === 'Dr Asha One');
-    await admin.put(`/api/admin/doctors/${asha.id}`).send({ ...asha, reg_no: 'Reg No DMC/R/99999' }).expect(200);
-    expect((await pool.query('select reg_no from doctors where id=$1', [asha.id])).rows[0].reg_no).toBe('Reg No DMC/R/99999');
+    await admin.put(`/api/admin/doctors/${asha.id}`).send({ ...asha, reg_no: 'Reg No DMC/R/99999', designation: 'Consultant', highlight: 'Co-founder' }).expect(200);
+    expect((await pool.query('select reg_no, designation, highlight from doctors where id=$1', [asha.id])).rows[0])
+      .toEqual({ reg_no: 'Reg No DMC/R/99999', designation: 'Consultant', highlight: 'Co-founder' });
     await admin.delete(`/api/admin/doctors/${asha.id}`).expect(409);
     const radha = await agentFor('radha@equaroots.com');
     await radha.get('/api/admin/doctors').expect(403);

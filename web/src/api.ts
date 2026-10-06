@@ -4,6 +4,8 @@ export interface Doctor {
   role: string | null;
   reg_no: string | null;
   email: string;
+  designation?: string | null;
+  highlight?: string | null;
   hasSignature?: boolean;
 }
 export interface AdminDoctor extends Doctor {
@@ -62,6 +64,7 @@ export interface Draft {
   prescriptionId: string;
   status: 'Draft' | 'Sent';
   impression: string;
+  progression: string;
   advice: string;
   medicines: MedLine[];
   approvedAt: string | null;
@@ -73,6 +76,7 @@ export interface HistoryItem {
   prescriptionId: string;
   status: string;
   impression: string | null;
+  progression: string | null;
   advice: string | null;
   medicines: MedLine[] | null;
   doctorName: string | null;
@@ -113,7 +117,7 @@ export const api = {
     req<{ history: HistoryItem[] }>(
       `/api/patients/${encodeURIComponent(patientId)}/history?exclude_booking_id=${excludeBookingId}`,
     ).then((r) => r.history),
-  save: (action: 'draft' | 'send', body: { bookingId: number; impression: string; advice: string; medicines: MedLine[] }) =>
+  save: (action: 'draft' | 'send', body: { bookingId: number; impression: string; progression: string; advice: string; medicines: MedLine[] }) =>
     req<{ status: string; prescriptionId: string; pdfUrl?: string }>(`/api/prescriptions?action=${action}`, {
       method: 'POST',
       body: JSON.stringify(body),
@@ -135,7 +139,7 @@ export const api = {
   webhookLogs: () => req<{ logs: WebhookLog[] }>('/api/admin/webhook-logs?limit=100').then((r) => r.logs),
   importCsv: (files: Record<string, string>) =>
     req<{ text: string }>('/api/admin/import-csv', { method: 'POST', body: JSON.stringify(files) }).then((r) => r.text),
-  async preview(bookingId: number, body: { impression: string; advice: string; medicines: MedLine[] }): Promise<Blob> {
+  async preview(bookingId: number, body: { impression: string; progression: string; advice: string; medicines: MedLine[] }): Promise<Blob> {
     const res = await fetch(`/api/prescriptions/${bookingId}/preview`, {
       method: 'POST',
       credentials: 'same-origin',

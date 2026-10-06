@@ -4,6 +4,7 @@ import { computePatientAssignments, type AssignableBooking } from '../src/servic
 import { matchDoctor, type Doctor } from '../src/services/doctors.js';
 import { signBody, verifyCalSignature } from '../src/lib/signature.js';
 import { mapCalPayload } from '../src/services/calPayload.js';
+import { medicineSentence, renderPrescriptionHtml } from '../src/services/prescriptionTemplate.js';
 
 const b = (id: number, o: Partial<AssignableBooking>): AssignableBooking => ({
   id, patient_id: null, patient_email: null, patient_phone: null, status: 'ACCEPTED',
@@ -104,5 +105,31 @@ describe('mapCalPayload', () => {
       cal_uid: 'u1', patient_name: 'Asha', patient_email: 'asha@x.com', patient_phone: '+91 90000 11111',
       age: '30', gender: 'F', doctor_name_raw: 'Dr. Radha Dangaich', meet_link: 'https://meet.google.com/x', status: 'ACCEPTED',
     });
+  });
+});
+
+describe('letterhead template', () => {
+  it('writes medicines the way the doctors do', () => {
+    expect(medicineSentence({ name: 'T. Mirtazapine', dosage: '7.5mg', frequency: '0-0-1', duration: '7 days then stop' }))
+      .toBe('T. Mirtazapine 7.5mg 0-0-1 for 7 days then stop');
+    expect(medicineSentence({ name: 'T. Etifoxine', dosage: '50mg', frequency: '1-1-1' })).toBe('T. Etifoxine 50mg 1-1-1');
+    expect(medicineSentence({ name: 'Vit D3', duration: 'for 8 weeks', notes: 'after food' })).toBe('Vit D3 for 8 weeks (after food)');
+  });
+  it('numbers medicines then advice lines, prints letterhead lines and escapes input', () => {
+    const html = renderPrescriptionHtml({
+      prescriptionId: 'RX-1234567890', date: new Date('2026-07-15T06:00:00Z'),
+      doctor: { display_name: 'Dr Radha Dangaich', role: 'MD Psychiatry (NIMHANS)', reg_no: 'Reg No DMC/R/25251', signature_url: null,
+        designation: 'Consultant Neuropsychiatrist', highlight: 'Co-founder Equaroots' },
+      patient: { name: 'Name <b>Surname</b>', patientId: 'PAT-001', age: '30', gender: 'Male', phone: null, email: null, consultationAt: null },
+      impression: 'GAD', progression: 'Improvement in sleep', advice: '1) Review after 20 days\n- Walk daily',
+      medicines: [{ name: 'T. Etifoxine', dosage: '50mg', frequency: '1-1-1' }],
+    });
+    expect(html).toContain('Date- 15/07/2026');
+    expect(html).toContain('Patient Details- Name &lt;b&gt;Surname&lt;/b&gt;, 30 year old male');
+    expect(html).toContain('Progression- Improvement in sleep');
+    expect(html).toMatch(/<li>T\. Etifoxine 50mg 1-1-1<\/li><li>Review after 20 days<\/li><li>Walk daily<\/li>/);
+    expect(html).toContain('Consultant Neuropsychiatrist');
+    expect(html).toContain('class="hl">Co-founder Equaroots');
+    expect(html).toContain('EQUAROOTS');
   });
 });

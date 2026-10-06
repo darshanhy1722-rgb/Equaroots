@@ -7,7 +7,7 @@ import { clearSession, issueSession, requireAdmin, requireAuthorized, requireSes
 import { config } from './config.js';
 import { pool } from './db.js';
 import { HttpError, loadBookingForViewer } from './services/access.js';
-import { listDoctors, upsertDoctorByName, validateSignature, type Doctor } from './services/doctors.js';
+import { listDoctors, validateSignature, type Doctor } from './services/doctors.js';
 import { approveAndSend, latestConsultation, previewPdf, sanitizeInput, saveDraft } from './services/prescriptions.js';
 import { rotateCalWebhookSecret } from './services/settings.js';
 import { formatSummary, importSheetData } from './services/sheetImport.js';
@@ -149,7 +149,7 @@ export function createApp() {
       if (!rowCount) throw new HttpError(403, 'not your patient');
     }
     const { rows } = await pool.query(
-      `select c.id, c.booking_id as "bookingId", c.prescription_id as "prescriptionId", c.status, c.impression, c.advice,
+      `select c.id, c.booking_id as "bookingId", c.prescription_id as "prescriptionId", c.status, c.impression, c.progression, c.advice,
               c.medicines_json as medicines, c.approved_at as "approvedAt", c.created_at as "createdAt",
               d.display_name as "doctorName", b.start_time as "consultationAt", c.pdf_url as "pdfKey"
          from consultations c left join doctors d on d.id = c.doctor_id left join bookings b on b.id = c.booking_id
@@ -173,6 +173,7 @@ export function createApp() {
         prescriptionId: c.prescription_id,
         status: c.status,
         impression: c.impression ?? '',
+        progression: c.progression ?? '',
         advice: c.advice ?? '',
         medicines: c.medicines_json ?? [],
         approvedAt: c.approved_at,
@@ -249,12 +250,14 @@ export function createApp() {
       email,
       role: String(b?.role ?? '').trim() || null,
       reg_no: String(b?.reg_no ?? '').trim() || null,
+      designation: String(b?.designation ?? '').trim() || null,
+      highlight: String(b?.highlight ?? '').trim() || null,
     };
   };
 
   authed.get('/admin/doctors', requireAdmin, h(async (_req, res) => {
     const { rows } = await pool.query(
-      `select d.id, d.display_name, d.role, d.reg_no, d.email, d.signature_url,
+      `select d.id, d.display_name, d.role, d.reg_no, d.designation, d.highlight, d.email, d.signature_url,
               (select count(*)::int from bookings b where b.doctor_id = d.id) as bookings
          from doctors d order by d.display_name`,
     );
@@ -268,7 +271,10 @@ export function createApp() {
       [d.display_name],
     );
     if (dup.rowCount) throw new HttpError(409, `${d.display_name} already exists — edit that doctor instead.`);
-    await upsertDoctorByName(pool, d);
+    await pool.query(
+      'insert into doctors(display_name, role, reg_no, designation, highlight, email) values ($1,$2,$3,$4,$5,$6)',
+      [d.display_name, d.role, d.reg_no, d.designation, d.highlight, d.email],
+    );
     // Link bookings that arrived before this doctor existed.
     await pool.query(
       `update bookings b set doctor_id = d.id from doctors d
@@ -281,9 +287,10 @@ export function createApp() {
 
   authed.put('/admin/doctors/:id', requireAdmin, h(async (req, res) => {
     const d = doctorBody(req.body);
-    const r = await pool.query('update doctors set display_name=$2, role=$3, reg_no=$4, email=$5 where id=$1', [
-      Number(req.params.id), d.display_name, d.role, d.reg_no, d.email,
-    ]);
+    const r = await pool.query(
+      'update doctors set display_name=$2, role=$3, reg_no=$4, email=$5, designation=$6, highlight=$7 where id=$1',
+      [Number(req.params.id), d.display_name, d.role, d.reg_no, d.email, d.designation, d.highlight],
+    );
     if (!r.rowCount) throw new HttpError(404, 'doctor not found');
     res.json({ ok: true });
   }));

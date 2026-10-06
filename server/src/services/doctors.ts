@@ -7,12 +7,14 @@ export interface Doctor {
   role: string | null;
   reg_no: string | null;
   signature_url: string | null;
+  designation?: string | null;
+  highlight?: string | null;
   email: string;
 }
 
 export async function listDoctors(db: Queryable): Promise<Doctor[]> {
   const { rows } = await db.query<Doctor>(
-    'select id, display_name, role, reg_no, signature_url, email from doctors order by display_name',
+    'select id, display_name, role, reg_no, designation, highlight, signature_url, email from doctors order by display_name',
   );
   return rows;
 }

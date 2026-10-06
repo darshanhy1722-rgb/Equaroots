@@ -16,6 +16,7 @@ interface Props {
 
 export function PrescriptionDrawer({ patient: p, medicines, isAdmin, onClose, onChanged, toast }: Props) {
   const [impression, setImpression] = useState('');
+  const [progression, setProgression] = useState('');
   const [advice, setAdvice] = useState('');
   const [meds, setMeds] = useState<MedLine[]>([blank()]);
   const [draft, setDraft] = useState<Draft | null>(null);
@@ -37,6 +38,7 @@ export function PrescriptionDrawer({ patient: p, medicines, isAdmin, onClose, on
         setDraft(d.draft);
         setPdfUrl(d.pdfUrl);
         setImpression(d.draft?.impression ?? '');
+        setProgression(d.draft?.progression ?? '');
         setAdvice(d.draft?.advice ?? '');
         setMeds(d.draft?.medicines?.length ? d.draft.medicines.map((m) => ({ ...blank(), ...m })) : [blank()]);
         setHistory(h);
@@ -54,7 +56,7 @@ export function PrescriptionDrawer({ patient: p, medicines, isAdmin, onClose, on
     return () => window.removeEventListener('keydown', onKey);
   }, [onClose, confirm]);
 
-  const body = () => ({ bookingId: p.bookingId, impression, advice, medicines: meds.filter((m) => m.name.trim()) });
+  const body = () => ({ bookingId: p.bookingId, impression, progression, advice, medicines: meds.filter((m) => m.name.trim()) });
   const setMed = (i: number, k: keyof MedLine, v: string) =>
     setMeds((ms) => ms.map((m, j) => (j === i ? { ...m, [k]: v } : m)));
 
@@ -105,7 +107,7 @@ export function PrescriptionDrawer({ patient: p, medicines, isAdmin, onClose, on
   }
 
   const s = statusLabel({ status: p.status, rxStatus: draft?.status ?? p.rxStatus });
-  const empty = !impression.trim() && !advice.trim() && !meds.some((m) => m.name.trim());
+  const empty = !impression.trim() && !progression.trim() && !advice.trim() && !meds.some((m) => m.name.trim());
 
   return (
     <div className="overlay" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
@@ -157,6 +159,7 @@ export function PrescriptionDrawer({ patient: p, medicines, isAdmin, onClose, on
                     {h.pdfUrl && <a href={h.pdfUrl} target="_blank" rel="noreferrer"> PDF</a>}
                   </div>
                   {h.impression && <div className="small">{h.impression}</div>}
+                  {h.progression && <div className="small muted">Progression: {h.progression}</div>}
                   {!!h.medicines?.length && (
                     <div className="small muted">{h.medicines.map((m) => `${m.name} ${m.dosage ?? ''}`.trim()).join(', ')}</div>
                   )}
@@ -171,7 +174,11 @@ export function PrescriptionDrawer({ patient: p, medicines, isAdmin, onClose, on
             <form className="rx-form" onSubmit={(e) => e.preventDefault()}>
               <label>
                 <span>Clinical impression</span>
-                <textarea rows={3} value={impression} onChange={(e) => setImpression(e.target.value)} placeholder="e.g. Generalised anxiety disorder, moderate" />
+                <textarea rows={2} value={impression} onChange={(e) => setImpression(e.target.value)} placeholder="e.g. GAD + Bipolar disorder type 3" />
+              </label>
+              <label>
+                <span>Progression <em className="opt">(follow-ups)</em></span>
+                <textarea rows={2} value={progression} onChange={(e) => setProgression(e.target.value)} placeholder="e.g. Improvement in sleep, minimal improvement in anxiety symptoms" />
               </label>
 
               <div className="meds-head">
@@ -189,9 +196,9 @@ export function PrescriptionDrawer({ patient: p, medicines, isAdmin, onClose, on
                 {meds.map((m, i) => (
                   <div className="med-row" key={i}>
                     <input className="med-name" list="medicine-list" placeholder="Medicine" value={m.name} onChange={(e) => setMed(i, 'name', e.target.value)} />
-                    <input placeholder="Dosage" value={m.dosage} onChange={(e) => setMed(i, 'dosage', e.target.value)} />
-                    <input placeholder="Frequency" value={m.frequency} onChange={(e) => setMed(i, 'frequency', e.target.value)} />
-                    <input placeholder="Duration" value={m.duration} onChange={(e) => setMed(i, 'duration', e.target.value)} />
+                    <input placeholder="e.g. 7.5mg" value={m.dosage} onChange={(e) => setMed(i, 'dosage', e.target.value)} />
+                    <input placeholder="e.g. 0-0-1" value={m.frequency} onChange={(e) => setMed(i, 'frequency', e.target.value)} />
+                    <input placeholder="e.g. 7 days then stop" value={m.duration} onChange={(e) => setMed(i, 'duration', e.target.value)} />
                     <input className="med-notes" placeholder="Notes" value={m.notes} onChange={(e) => setMed(i, 'notes', e.target.value)} />
                     <button type="button" className="icon-btn sm" aria-label="Remove" onClick={() => setMeds((ms) => (ms.length > 1 ? ms.filter((_, j) => j !== i) : [blank()]))}>
                       ×
@@ -201,8 +208,8 @@ export function PrescriptionDrawer({ patient: p, medicines, isAdmin, onClose, on
               </div>
 
               <label>
-                <span>Advice</span>
-                <textarea rows={3} value={advice} onChange={(e) => setAdvice(e.target.value)} placeholder="Sleep hygiene, follow-up in 4 weeks…" />
+                <span>Advice <em className="opt">(one per line — numbered after the medicines)</em></span>
+                <textarea rows={3} value={advice} onChange={(e) => setAdvice(e.target.value)} placeholder={'Vit D3 60k IU capsule once weekly for 8 weeks\nReview after 20 days'} />
               </label>
             </form>
           )}

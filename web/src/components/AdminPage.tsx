@@ -32,7 +32,7 @@ export function AdminPage({ toast, onDataChanged }: { toast: Toast; onDataChange
   );
 }
 
-const blankDoctor = { display_name: '', role: '', reg_no: '', email: '' };
+const blankDoctor = { display_name: '', role: '', designation: '', highlight: '', reg_no: '', email: '' };
 
 function DoctorsTab({ toast, onDataChanged }: { toast: Toast; onDataChanged: () => void }) {
   const [doctors, setDoctors] = useState<AdminDoctor[]>([]);
@@ -98,7 +98,7 @@ function DoctorsTab({ toast, onDataChanged }: { toast: Toast; onDataChanged: () 
             {doctors.map((d) => (
               <tr key={d.id}>
                 <td className="strong">{d.display_name}</td>
-                <td>{d.role ?? '—'}</td>
+                <td>{d.role ?? '—'}{d.designation && <div className="small muted">{d.designation}</div>}</td>
                 <td className={/\/$/.test(d.reg_no ?? '') ? 'warn' : ''}>{d.reg_no ?? '—'}</td>
                 <td>
                   {d.email}
@@ -111,7 +111,7 @@ function DoctorsTab({ toast, onDataChanged }: { toast: Toast; onDataChanged: () 
                 </td>
                 <td>{d.bookings}</td>
                 <td><div className="row-actions">
-                  <button className="btn ghost sm" onClick={() => setEditing({ id: d.id, display_name: d.display_name, role: d.role ?? '', reg_no: d.reg_no ?? '', email: d.email })}>Edit</button>
+                  <button className="btn ghost sm" onClick={() => setEditing({ id: d.id, display_name: d.display_name, role: d.role ?? '', designation: d.designation ?? '', highlight: d.highlight ?? '', reg_no: d.reg_no ?? '', email: d.email })}>Edit</button>
                   <button className="btn ghost sm danger" onClick={() => remove(d)} disabled={d.bookings > 0} title={d.bookings ? 'Has bookings' : 'Delete'}>Delete</button>
                 </div></td>
               </tr>
@@ -134,6 +134,8 @@ function DoctorsTab({ toast, onDataChanged }: { toast: Toast; onDataChanged: () 
               [
                 ['display_name', 'Name (as printed on the prescription)', 'Dr Radha Dangaich'],
                 ['role', 'Qualification', 'MD Psychiatry (NIMHANS)'],
+                ['designation', 'Designation (letterhead line)', 'Consultant Neuropsychiatrist'],
+                ['highlight', 'Highlighted line (gold on letterhead)', 'Co-founder Equaroots'],
                 ['reg_no', 'Registration number', 'Reg No DMC/R/25251'],
                 ['email', 'Login email (Google / Cal.id)', 'doctor@equaroots.com'],
               ] as [keyof typeof blankDoctor, string, string][]

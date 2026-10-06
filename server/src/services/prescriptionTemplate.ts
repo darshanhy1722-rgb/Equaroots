@@ -1,3 +1,6 @@
+import QRCode from 'qrcode';
+import { LOGO_SVG } from '../brand.js';
+import { config } from '../config.js';
 import type { Doctor } from './doctors.js';
 
 export interface MedicineLine {
@@ -11,7 +14,7 @@ export interface MedicineLine {
 export interface PrescriptionView {
   prescriptionId: string;
   date: Date;
-  doctor: Pick<Doctor, 'display_name' | 'role' | 'reg_no' | 'signature_url'>;
+  doctor: Pick<Doctor, 'display_name' | 'role' | 'reg_no' | 'signature_url'> & Partial<Pick<Doctor, 'designation' | 'highlight'>>;
   patient: {
     name: string;
     patientId: string | null;
@@ -22,8 +25,21 @@ export interface PrescriptionView {
     consultationAt: Date | null;
   };
   impression: string;
+  progression?: string;
   advice: string;
   medicines: MedicineLine[];
+  /** Footer QR code (SVG markup). */
+  qrSvg?: string;
+}
+
+let qrCache: Promise<string> | null = null;
+/** QR code for the letterhead footer (Instagram by default; CLINIC_QR_URL to change). */
+export function clinicQrSvg(): Promise<string> {
+  if (!config.clinic.qrUrl) return Promise.resolve('');
+  qrCache ??= QRCode.toString(config.clinic.qrUrl, { type: 'svg', margin: 0, errorCorrectionLevel: 'M', color: { dark: '#1e421e', light: '#ffffff' } }).catch(
+    () => '',
+  );
+  return qrCache;
 }
 
 const esc = (v: unknown) =>
@@ -35,103 +51,135 @@ const esc = (v: unknown) =>
 
 const multiline = (v: string) => esc(v).replace(/\n/g, '<br>');
 
-const fmtDate = (d: Date | null) =>
-  d ? d.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric', timeZone: 'Asia/Kolkata' }) : '—';
+const ddmmyyyy = (d: Date) =>
+  d.toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric', timeZone: 'Asia/Kolkata' });
 
-/** Branded A4 prescription. Identity always comes from the treating doctor passed in, never the viewer. */
+/** "T. Mirtazapine 7.5mg 0-0-1 for 7 days then stop — after food" */
+export function medicineSentence(m: MedicineLine): string {
+  const dur = (m.duration ?? '').trim();
+  const parts = [m.name, m.dosage, m.frequency].map((x) => (x ?? '').trim()).filter(Boolean);
+  if (dur) parts.push(/^(for|till|until|x)\b/i.test(dur) ? dur : `for ${dur}`);
+  let s = parts.join(' ');
+  if (m.notes?.trim()) s += ` (${m.notes.trim()})`;
+  return s;
+}
+
+/** "Name Surname, 30 year old male" */
+function patientLine(p: PrescriptionView['patient']): string {
+  const age = (p.age ?? '').trim();
+  const g = (p.gender ?? '').trim().toLowerCase();
+  const desc = [age ? `${age}${/^\d+$/.test(age) ? ' year old' : ''}` : '', g].filter(Boolean).join(' ');
+  return desc ? `${p.name}, ${desc}` : p.name;
+}
+
+const icon = {
+  phone: '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="12" fill="#fff"/><path fill="#1e421e" d="M16.6 14.2l-1.7-.8a1 1 0 00-1.1.2l-.8.8a8 8 0 01-3.4-3.4l.8-.8a1 1 0 00.2-1.1l-.8-1.7a1 1 0 00-1.2-.5L7.4 7.4A1 1 0 006.8 8.6a10.6 10.6 0 008.6 8.6 1 1 0 001.2-.6l.5-1.2a1 1 0 00-.5-1.2z"/></svg>',
+  pin: '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="12" fill="#fff"/><path fill="#1e421e" d="M12 5.5a4.5 4.5 0 00-4.5 4.5c0 3.4 4.5 8.5 4.5 8.5s4.5-5.1 4.5-8.5A4.5 4.5 0 0012 5.5zm0 6.2a1.7 1.7 0 110-3.4 1.7 1.7 0 010 3.4z"/></svg>',
+  mail: '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="12" fill="#fff"/><path fill="#1e421e" d="M6.5 8.5h11v7h-11z" opacity=".25"/><path fill="none" stroke="#1e421e" stroke-width="1.4" d="M6.5 8.5h11v7h-11zM6.5 8.5l5.5 4 5.5-4"/></svg>',
+};
+
+/**
+ * EquaRoots letterhead prescription. Identity always comes from the treating
+ * doctor passed in, never the signed-in viewer.
+ */
 export function renderPrescriptionHtml(v: PrescriptionView): string {
-  const ageGender = [v.patient.age, v.patient.gender].filter(Boolean).join(' / ') || '—';
-  const meds = v.medicines.filter((m) => m.name?.trim());
+  const d = v.doctor;
+  const c = config.clinic;
+  const items = [
+    ...v.medicines.filter((m) => m.name?.trim()).map(medicineSentence),
+    ...v.advice.split('\n').map((l) => l.replace(/^\s*(\d+[.)]|[-•*])\s*/, '').trim()).filter(Boolean),
+  ];
+  const meta = [
+    v.patient.patientId && `Patient ID: ${v.patient.patientId}`,
+    v.patient.phone,
+    v.patient.email,
+  ].filter(Boolean);
+
   return `<!doctype html>
 <html><head><meta charset="utf-8"><title>${esc(v.prescriptionId)}</title>
 <style>
   @page { size: A4; margin: 0; }
   * { box-sizing: border-box; }
-  body { margin: 0; font-family: 'Helvetica Neue', Arial, sans-serif; color: #1f2a2e; font-size: 12.5px; }
-  .page { width: 210mm; min-height: 297mm; padding: 0 0 18mm; position: relative; }
-  .band { background: linear-gradient(120deg, #0f5c56, #1b8a7a); color: #fff; padding: 22px 34px 20px; display: flex; justify-content: space-between; align-items: flex-end; }
-  .brand { font-size: 26px; font-weight: 700; letter-spacing: .5px; }
-  .brand small { display: block; font-size: 11px; font-weight: 400; opacity: .85; letter-spacing: 1.5px; text-transform: uppercase; margin-top: 3px; }
-  .rxmeta { text-align: right; font-size: 11.5px; line-height: 1.6; }
-  .rxmeta b { font-size: 13px; }
-  .body { padding: 22px 34px 0; }
-  .doc { display: flex; justify-content: space-between; border-bottom: 2px solid #e3eeec; padding-bottom: 12px; }
-  .doc .name { font-size: 17px; font-weight: 700; color: #0f5c56; }
-  .doc .sub { color: #51666a; margin-top: 2px; }
-  .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px 18px; background: #f4f9f8; border-radius: 8px; padding: 12px 16px; margin: 16px 0 6px; }
-  .grid .k { font-size: 10px; text-transform: uppercase; letter-spacing: 1px; color: #6b8084; }
-  .grid .v { font-weight: 600; margin-top: 1px; word-break: break-word; }
-  h3 { font-size: 12px; text-transform: uppercase; letter-spacing: 1.4px; color: #0f5c56; margin: 20px 0 8px; }
-  .rx { font-family: Georgia, serif; font-size: 30px; color: #1b8a7a; margin: 18px 0 -6px; }
-  .text { line-height: 1.55; white-space: normal; }
-  table { width: 100%; border-collapse: collapse; }
-  th { text-align: left; font-size: 10.5px; text-transform: uppercase; letter-spacing: .8px; color: #51666a; border-bottom: 1.5px solid #cfe0dd; padding: 7px 6px; }
-  td { padding: 8px 6px; border-bottom: 1px solid #edf3f2; vertical-align: top; }
-  td.n { color: #8aa0a3; width: 22px; }
-  td.med { font-weight: 600; }
-  .sign { margin-top: 40px; display: flex; justify-content: flex-end; }
-  .sign .box { text-align: center; min-width: 220px; }
-  .sign img { max-height: 56px; max-width: 200px; display: block; margin: 0 auto 4px; }
-  .sign .line { border-top: 1px solid #9fb3b5; padding-top: 6px; font-weight: 700; }
-  .sign .sub { color: #51666a; font-size: 11px; }
-  .sign .dsig { margin-top: 5px; font-size: 9.5px; color: #1b8a7a; letter-spacing: .4px; }
-  .foot { position: absolute; left: 34px; right: 34px; bottom: 8mm; border-top: 1px solid #e3eeec; padding-top: 8px; font-size: 9.5px; color: #7d9195; display: flex; justify-content: space-between; }
+  html, body { margin: 0; }
+  body { font-family: Arial, 'Helvetica Neue', Helvetica, sans-serif; color: #111; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  .page { width: 210mm; min-height: 297mm; display: flex; flex-direction: column; }
+  .band { position: relative; background: #1e421e; height: 40mm; margin-top: 2mm; }
+  .band::after { content: ''; position: absolute; left: 0; right: 0; bottom: 0; height: 4.5mm; background: #566f5a; }
+  .logo { position: absolute; left: 12mm; top: -2mm; width: 54mm; height: 50mm; background: #566f5a; padding: 2.4mm; z-index: 2; }
+  .logo-inner { background: #fff; width: 100%; height: 100%; display: grid; place-items: center; }
+  .logo svg { width: 92%; height: auto; display: block; }
+  .doc { position: absolute; right: 12mm; top: 6.5mm; text-align: right; color: #f1f3ef; line-height: 1.55; z-index: 1; }
+  .doc .name { font-weight: 700; font-size: 14.5px; letter-spacing: .2px; }
+  .doc .line { font-size: 13px; color: #e2e8df; }
+  .doc .hl { font-size: 13px; font-weight: 700; color: #e9b84a; }
+  .body { padding: 18mm 16mm 6mm 18mm; flex: 1; font-style: italic; font-weight: 700; font-size: 15.5px; line-height: 1.45; }
+  .meta-row { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 9mm; font-style: normal; }
+  .rxno { color: #3f8a3c; font-weight: 400; font-size: 15px; }
+  .date { font-style: italic; font-size: 17px; }
+  .sec { margin: 0 0 7mm; }
+  .sub { font-style: normal; font-weight: 400; font-size: 11.5px; color: #555; margin-top: 1.2mm; }
+  ol { margin: 1.5mm 0 0; padding-left: 0; list-style: none; counter-reset: n; }
+  ol li { counter-increment: n; margin: .6mm 0; }
+  ol li::before { content: counter(n) ") "; }
+  .sign { display: flex; justify-content: flex-end; margin-top: 6mm; }
+  .sign-box { width: 64mm; text-align: center; font-style: normal; font-weight: 400; }
+  .sign-box img { max-height: 24mm; max-width: 56mm; display: block; margin: 0 auto -1mm; }
+  .stamp { display: inline-block; border: 1.6px solid #1d2f6b; color: #1d2f6b; padding: 1.2mm 2.6mm; line-height: 1.25; margin-top: 1mm; }
+  .stamp b { font-size: 12.5px; display: block; }
+  .stamp span { font-size: 9px; font-weight: 700; display: block; }
+  .dsig { font-size: 9px; color: #3f8a3c; margin-top: 1.4mm; letter-spacing: .3px; }
+  .foot { background: #1e421e; color: #eef2ec; padding: 4mm 12mm 3.4mm 6mm; display: flex; align-items: center; gap: 6mm; border-top: 4.5mm solid #566f5a; }
+  .qr { background: #fff; padding: 1.6mm; width: 22mm; height: 22mm; flex: none; }
+  .qr svg { width: 100%; height: 100%; display: block; }
+  .foot-main { flex: 1; }
+  .foot-row { display: flex; justify-content: space-between; align-items: center; gap: 4mm; font-size: 12.5px; }
+  .foot-row div { display: flex; align-items: center; gap: 2mm; white-space: nowrap; }
+  .foot-row svg { width: 6.5mm; height: 6.5mm; flex: none; }
+  .social { text-align: center; font-size: 11.5px; margin-top: 2mm; color: #dfe6dc; }
 </style></head>
 <body><div class="page">
   <div class="band">
-    <div class="brand">EquaRoots<small>Psychiatry &amp; Mental Wellness · Telehealth</small></div>
-    <div class="rxmeta"><b>${esc(v.prescriptionId)}</b><br>Date: ${fmtDate(v.date)}</div>
-  </div>
-  <div class="body">
+    <div class="logo"><div class="logo-inner">${LOGO_SVG}</div></div>
     <div class="doc">
-      <div>
-        <div class="name">${esc(v.doctor.display_name)}</div>
-        <div class="sub">${esc(v.doctor.role ?? '')}</div>
-      </div>
-      <div class="sub" style="text-align:right">${esc(v.doctor.reg_no ?? '')}</div>
+      <div class="name">${esc(d.display_name)}</div>
+      ${d.role ? `<div class="line">${esc(d.role)}</div>` : ''}
+      ${d.designation ? `<div class="line">${esc(d.designation)}</div>` : ''}
+      ${d.highlight ? `<div class="hl">${esc(d.highlight)}</div>` : ''}
     </div>
-    <div class="grid">
-      <div><div class="k">Patient</div><div class="v">${esc(v.patient.name)}</div></div>
-      <div><div class="k">Patient ID</div><div class="v">${esc(v.patient.patientId ?? '—')}</div></div>
-      <div><div class="k">Age / Gender</div><div class="v">${esc(ageGender)}</div></div>
-      <div><div class="k">Phone</div><div class="v">${esc(v.patient.phone ?? '—')}</div></div>
-      <div><div class="k">Email</div><div class="v">${esc(v.patient.email ?? '—')}</div></div>
-      <div><div class="k">Consultation</div><div class="v">${fmtDate(v.patient.consultationAt)}</div></div>
+  </div>
+
+  <div class="body">
+    <div class="meta-row">
+      <span class="rxno">${esc(v.prescriptionId)}</span>
+      <span class="date">Date- ${ddmmyyyy(v.date)}</span>
     </div>
 
-    <h3>Clinical Impression</h3>
-    <div class="text">${v.impression ? multiline(v.impression) : '—'}</div>
+    <div class="sec">Patient Details- ${esc(patientLine(v.patient))}
+      ${meta.length ? `<div class="sub">${meta.map(esc).join(' · ')}</div>` : ''}
+    </div>
 
-    <div class="rx">℞</div>
-    <h3>Medicines</h3>
-    ${
-      meds.length
-        ? `<table><thead><tr><th></th><th>Medicine</th><th>Dosage</th><th>Frequency</th><th>Duration</th><th>Notes</th></tr></thead><tbody>
-      ${meds
-        .map(
-          (m, i) => `<tr><td class="n">${i + 1}</td><td class="med">${esc(m.name)}</td><td>${esc(m.dosage)}</td><td>${esc(
-            m.frequency,
-          )}</td><td>${esc(m.duration)}</td><td>${esc(m.notes)}</td></tr>`,
-        )
-        .join('')}
-      </tbody></table>`
-        : '<div class="text">No medicines prescribed.</div>'
-    }
+    ${v.impression ? `<div class="sec">Impression- ${multiline(v.impression)}</div>` : ''}
+    ${v.progression ? `<div class="sec">Progression- ${multiline(v.progression)}</div>` : ''}
 
-    <h3>Advice</h3>
-    <div class="text">${v.advice ? multiline(v.advice) : '—'}</div>
+    ${items.length ? `<div class="sec">Advise-<ol>${items.map((i) => `<li>${esc(i)}</li>`).join('')}</ol></div>` : ''}
 
-    <div class="sign"><div class="box">
-      ${v.doctor.signature_url ? `<img src="${esc(v.doctor.signature_url)}" alt="">` : '<div style="height:40px"></div>'}
-      <div class="line">${esc(v.doctor.display_name)}</div>
-      <div class="sub">${esc(v.doctor.role ?? '')}</div>
-      <div class="sub">${esc(v.doctor.reg_no ?? '')}</div>
-      ${v.doctor.signature_url ? `<div class="dsig">Digitally signed · ${fmtDate(v.date)}</div>` : ''}
+    <div class="sign"><div class="sign-box">
+      ${d.signature_url ? `<img src="${esc(d.signature_url)}" alt="">` : '<div style="height:16mm"></div>'}
+      <div class="stamp"><b>${esc(d.display_name)}</b>${d.role ? `<span>${esc(d.role)}</span>` : ''}${d.reg_no ? `<span>${esc(d.reg_no)}</span>` : ''}</div>
+      ${d.signature_url ? `<div class="dsig">Digitally signed · ${ddmmyyyy(v.date)}</div>` : ''}
     </div></div>
   </div>
+
   <div class="foot">
-    <span>This is a digitally generated prescription issued after a telehealth consultation.</span>
-    <span>${esc(v.prescriptionId)}</span>
+    ${v.qrSvg ? `<div class="qr">${v.qrSvg}</div>` : ''}
+    <div class="foot-main">
+      <div class="foot-row">
+        ${c.phone ? `<div>${icon.phone}${esc(c.phone)}</div>` : ''}
+        ${c.entity ? `<div>${icon.pin}${esc(c.entity)}</div>` : ''}
+        ${c.email ? `<div>${icon.mail}${esc(c.email)}</div>` : ''}
+      </div>
+      ${c.social ? `<div class="social">${esc(c.social)}</div>` : ''}
+    </div>
   </div>
 </div></body></html>`;
 }

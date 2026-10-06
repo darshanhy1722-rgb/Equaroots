@@ -12,7 +12,7 @@ Google Sheets version and keeps the same business rules.
 
 ![Admin dashboard](docs/screenshots/02-admin-dashboard.png)
 
-| Prescription drawer | Generated PDF |
+| Prescription drawer | Generated PDF (EquaRoots letterhead) |
 |---|---|
 | ![](docs/screenshots/03-prescription-drawer.png) | ![](docs/screenshots/07-prescription-pdf.png) |
 
@@ -95,6 +95,10 @@ Postgres database. After the first deploy:
    - Secret: the generated `CAL_WEBHOOK_SECRET` (or rotate one with `/api/admin/reassign-token`)
    - Events: created, rescheduled, cancelled
 4. Run the sheet migration once against the production `DATABASE_URL`.
+
+## Letterhead
+
+The PDF uses the EquaRoots letterhead: the lotus logo (vector, `server/src/brand.ts` and `web/public/logo.svg`), the doctor's name, qualification, designation and gold highlight line (editable in **Admin tools → Doctors**), numbered *Advise-* items (the medicines first, then each advice line), the doctor's digital signature with a stamp box, and a footer with a QR code and contact details (`CLINIC_*` env vars).
 
 ## Security notes
 

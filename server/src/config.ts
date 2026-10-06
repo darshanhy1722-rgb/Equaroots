@@ -28,6 +28,14 @@ export const config = {
     region: process.env.STORAGE_REGION ?? 'auto',
     localDir: process.env.LOCAL_STORAGE_DIR ?? './data/pdfs',
   },
+  /** Letterhead footer details. */
+  clinic: {
+    phone: process.env.CLINIC_PHONE ?? '+91 8796592169',
+    email: process.env.CLINIC_EMAIL ?? 'hello@equaroots.com',
+    entity: process.env.CLINIC_ENTITY ?? 'Dangaich Ventures LLP',
+    social: process.env.CLINIC_SOCIAL ?? '@equaroots on IG | YT | LinkedIn',
+    qrUrl: process.env.CLINIC_QR_URL ?? 'https://www.instagram.com/equaroots/',
+  },
   chromiumPath: process.env.PUPPETEER_EXECUTABLE_PATH ?? process.env.CHROMIUM_PATH ?? '',
   /** Enables POST /api/auth/dev-login. Never set in production. */
   devLogin: process.env.AUTH_DEV_LOGIN === 'true',

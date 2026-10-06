@@ -5,11 +5,12 @@ import { HttpError, loadBookingForViewer, type BookingRow } from './access.js';
 import { resolveActingDoctor, type Doctor } from './doctors.js';
 import { sendEmail } from './email.js';
 import { htmlToPdf } from './pdf.js';
-import { renderPrescriptionHtml, type MedicineLine } from './prescriptionTemplate.js';
+import { clinicQrSvg, renderPrescriptionHtml, type MedicineLine } from './prescriptionTemplate.js';
 import { putPdf, signedPdfUrl } from './storage.js';
 
 export interface PrescriptionInput {
   impression: string;
+  progression: string;
   advice: string;
   medicines: MedicineLine[];
 }
@@ -19,6 +20,7 @@ export interface ConsultationRow {
   booking_id: number;
   prescription_id: string;
   impression: string | null;
+  progression: string | null;
   advice: string | null;
   medicines_json: MedicineLine[] | null;
   status: string;
@@ -35,6 +37,7 @@ export function sanitizeInput(body: any): PrescriptionInput {
   const meds = Array.isArray(body?.medicines) ? body.medicines : [];
   return {
     impression: clip(body?.impression, 8000).trim(),
+    progression: clip(body?.progression, 8000).trim(),
     advice: clip(body?.advice, 8000).trim(),
     medicines: meds.slice(0, 50).map((m: any) => ({
       name: clip(m?.name, 200).trim(),
@@ -65,8 +68,9 @@ async function actingDoctorOrThrow(db: Queryable, b: BookingRow): Promise<Doctor
   return d;
 }
 
-function buildPdfHtml(b: BookingRow, doctor: Doctor, input: PrescriptionInput, prescriptionId: string) {
+async function buildPdfHtml(b: BookingRow, doctor: Doctor, input: PrescriptionInput, prescriptionId: string) {
   return renderPrescriptionHtml({
+    qrSvg: await clinicQrSvg(),
     prescriptionId,
     date: new Date(),
     doctor,
@@ -94,16 +98,16 @@ async function upsertConsultation(
 ): Promise<ConsultationRow> {
   const common = [
     b.patient_name, b.age, b.gender, b.patient_email, b.patient_phone, b.patient_id, doctor.id,
-    input.impression, input.advice, JSON.stringify(input.medicines), status,
+    input.impression, input.advice, JSON.stringify(input.medicines), status, input.progression,
   ];
   if (existing) {
     const { rows } = await db.query<ConsultationRow>(
       `update consultations set patient_name=$1, age=$2, gender=$3, email=$4, phone=$5, patient_uid=$6, doctor_id=$7,
-         impression=$8, advice=$9, medicines_json=$10, status=$11,
-         pdf_url=coalesce($12, pdf_url),
+         impression=$8, advice=$9, medicines_json=$10, status=$11, progression=$12,
+         pdf_url=coalesce($13, pdf_url),
          approved_at=case when $11='Sent' then now() else approved_at end,
          updated_at=now()
-       where id=$13 returning *`,
+       where id=$14 returning *`,
       [...common, pdfKey, existing.id],
     );
     return rows[0];
@@ -113,8 +117,8 @@ async function upsertConsultation(
     try {
       const { rows } = await db.query<ConsultationRow>(
         `insert into consultations(patient_name, age, gender, email, phone, patient_uid, doctor_id, impression, advice,
-           medicines_json, status, pdf_url, approved_at, booking_id, prescription_id)
-         values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12, case when $11='Sent' then now() end, $13, $14) returning *`,
+           medicines_json, status, progression, pdf_url, approved_at, booking_id, prescription_id)
+         values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13, case when $11='Sent' then now() end, $14, $15) returning *`,
         [...common, pdfKey, b.id, generatePrescriptionId()],
       );
       return rows[0];
@@ -143,11 +147,12 @@ export async function previewPdf(viewer: Viewer, bookingId: number, input: Presc
   const existing = await latestConsultation(pool, b.id);
   const data: PrescriptionInput = input ?? {
     impression: existing?.impression ?? '',
+    progression: existing?.progression ?? '',
     advice: existing?.advice ?? '',
     medicines: existing?.medicines_json ?? [],
   };
   const rxId = existing?.prescription_id ?? 'RX-PREVIEW';
-  return { pdf: await htmlToPdf(buildPdfHtml(b, doctor, data, rxId)), prescriptionId: rxId };
+  return { pdf: await htmlToPdf(await buildPdfHtml(b, doctor, data, rxId)), prescriptionId: rxId };
 }
 
 /**
@@ -158,7 +163,7 @@ export async function previewPdf(viewer: Viewer, bookingId: number, input: Presc
 export async function approveAndSend(viewer: Viewer, bookingId: number, input: PrescriptionInput) {
   const b = await loadBookingForViewer(pool, viewer, bookingId);
   if (!b.patient_email) throw new HttpError(422, 'This booking has no patient email to send to.');
-  if (!input.impression && !input.advice && !input.medicines.length) {
+  if (!input.impression && !input.progression && !input.advice && !input.medicines.length) {
     throw new HttpError(422, 'Prescription is empty.');
   }
   const doctor = await actingDoctorOrThrow(pool, b);
@@ -170,7 +175,7 @@ export async function approveAndSend(viewer: Viewer, bookingId: number, input: P
     return upsertConsultation(c, b, doctor, input, 'Draft', existing, null);
   });
 
-  const pdf = await htmlToPdf(buildPdfHtml(b, doctor, input, consult.prescription_id));
+  const pdf = await htmlToPdf(await buildPdfHtml(b, doctor, input, consult.prescription_id));
   const key = `prescriptions/${b.patient_id ?? 'unassigned'}/${consult.prescription_id}.pdf`;
   await putPdf(key, pdf);
 
