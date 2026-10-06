@@ -241,3 +241,26 @@ textarea:focus, .med-row input:focus { border-color: var(--brand-2); box-shadow:
 .field .lp .lp-name { font-weight: 700; font-size: 14px; color: var(--text); }
 .field .lp .lp-blurb { font-size: 12px; color: var(--muted); font-weight: 400; }
 .field .lp .lp-check { color: #fff; font-size: 11px; }
+
+/* Quick picks + drag and drop */
+.med-row { grid-template-columns: 18px 2fr 1fr 1.1fr 1.2fr 1.4fr 30px; border-radius: 10px; padding: 3px; transition: background .12s, box-shadow .12s; }
+.med-row.active { background: #f4f8f3; }
+.med-row.drop { background: var(--brand-soft); box-shadow: 0 0 0 2px var(--brand-2) inset; }
+.med-row.dragging { opacity: .45; }
+.drag-handle { cursor: grab; color: #9db0a0; font-size: 14px; letter-spacing: -2px; user-select: none; text-align: center; }
+.drag-handle:active { cursor: grabbing; }
+.qp { border: 1px dashed #c9d8c6; border-radius: 12px; padding: 10px 12px; display: flex; flex-direction: column; gap: 7px; background: #fbfdfb; }
+.qp-hint { font-size: 12px; color: var(--muted); }
+.qp-group { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.qp-label { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .8px; color: var(--muted); width: 84px; flex: none; }
+.chip-btn { border: 1px solid var(--line); background: #fff; border-radius: 999px; padding: 4px 10px; font-size: 12.5px; cursor: grab; transition: border-color .12s, background .12s; }
+.chip-btn:hover { border-color: var(--brand-2); background: var(--brand-soft); }
+.chip-btn:active { cursor: grabbing; }
+.qp-frequency .chip-btn { font-family: ui-monospace, 'SF Mono', Menlo, monospace; font-weight: 600; color: var(--brand); }
+.qp-advice .chip-btn { border-color: #f1dfb2; background: #fffaf0; }
+textarea.drop { border-color: var(--brand-2); box-shadow: 0 0 0 3px var(--brand-soft); background: #f4f8f3; }
+@media (max-width: 720px) {
+  .med-row { grid-template-columns: 18px 1fr 1fr; }
+  .med-row .med-name, .med-row .med-notes { grid-column: span 2; }
+  .qp-label { width: 100%; }
+}

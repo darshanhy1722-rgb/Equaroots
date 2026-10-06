@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { api, type Draft, type HistoryItem, type MedLine, type Medicine, type Patient } from '../api';
 import type { ToastKind } from './Toast';
+import { appendAdvice, applyToMed, CHIP_MIME, QuickPicks, readChip, ROW_MIME, type ChipKind } from './QuickPicks';
 import { fmtWhen, statusLabel } from './PatientCard';
 
 const blank = (): MedLine => ({ name: '', dosage: '', frequency: '', duration: '', notes: '' });
@@ -59,6 +60,38 @@ export function PrescriptionDrawer({ patient: p, medicines, isAdmin, onClose, on
   const body = () => ({ bookingId: p.bookingId, impression, progression, advice, medicines: meds.filter((m) => m.name.trim()) });
   const setMed = (i: number, k: keyof MedLine, v: string) =>
     setMeds((ms) => ms.map((m, j) => (j === i ? { ...m, [k]: v } : m)));
+
+  // Quick picks: the row the doctor last worked on receives clicked chips.
+  const [activeRow, setActiveRow] = useState<number | null>(null);
+  const [dropRow, setDropRow] = useState<number | null>(null);
+  const [dragRow, setDragRow] = useState<number | null>(null);
+  const [adviceHot, setAdviceHot] = useState(false);
+
+  function applyChip(kind: ChipKind, value: string, row?: number) {
+    if (kind === 'advice') {
+      setAdvice((a) => appendAdvice(a, value));
+      return;
+    }
+    setMeds((ms) => {
+      // Explicit row → last edited row → first row missing that field → last row.
+      let i = row ?? activeRow ?? ms.findIndex((m) => m.name.trim() && !m[kind].trim());
+      if (i == null || i < 0 || i >= ms.length) i = ms.length - 1;
+      return ms.map((m, j) => (j === i ? applyToMed(m, kind, value) : m));
+    });
+  }
+
+  function moveRow(from: number, to: number) {
+    if (from === to) return;
+    setMeds((ms) => {
+      const next = [...ms];
+      const [m] = next.splice(from, 1);
+      next.splice(to, 0, m);
+      return next;
+    });
+    setActiveRow(to);
+  }
+
+  const isOurs = (e: React.DragEvent) => e.dataTransfer.types.includes(CHIP_MIME) || e.dataTransfer.types.includes(ROW_MIME);
 
   async function saveDraft() {
     setBusy('draft');
@@ -194,11 +227,53 @@ export function PrescriptionDrawer({ patient: p, medicines, isAdmin, onClose, on
               </datalist>
               <div className="meds">
                 {meds.map((m, i) => (
-                  <div className="med-row" key={i}>
+                  <div
+                    className={`med-row ${dropRow === i ? 'drop' : ''} ${activeRow === i ? 'active' : ''} ${dragRow === i ? 'dragging' : ''}`}
+                    key={i}
+                    onFocus={() => setActiveRow(i)}
+                    onDragOver={(e) => {
+                      if (!isOurs(e)) return;
+                      e.preventDefault();
+                      setDropRow(i);
+                    }}
+                    onDragLeave={(e) => {
+                      if (!e.currentTarget.contains(e.relatedTarget as Node)) setDropRow((r) => (r === i ? null : r));
+                    }}
+                    onDrop={(e) => {
+                      setDropRow(null);
+                      const from = e.dataTransfer.getData(ROW_MIME);
+                      if (from !== '') {
+                        e.preventDefault();
+                        moveRow(Number(from), i);
+                        return;
+                      }
+                      const chip = readChip(e);
+                      if (!chip) return;
+                      e.preventDefault(); // stop the browser also pasting the text into the input
+                      applyChip(chip.kind, chip.value, chip.kind === 'advice' ? undefined : i);
+                      setActiveRow(i);
+                    }}
+                  >
+                    <span
+                      className="drag-handle"
+                      draggable
+                      title="Drag to reorder"
+                      onDragStart={(e) => {
+                        e.dataTransfer.setData(ROW_MIME, String(i));
+                        e.dataTransfer.effectAllowed = 'move';
+                        setDragRow(i);
+                      }}
+                      onDragEnd={() => {
+                        setDragRow(null);
+                        setDropRow(null);
+                      }}
+                    >
+                      ⋮⋮
+                    </span>
                     <input className="med-name" list="medicine-list" placeholder="Medicine" value={m.name} onChange={(e) => setMed(i, 'name', e.target.value)} />
-                    <input placeholder="e.g. 7.5mg" value={m.dosage} onChange={(e) => setMed(i, 'dosage', e.target.value)} />
-                    <input placeholder="e.g. 0-0-1" value={m.frequency} onChange={(e) => setMed(i, 'frequency', e.target.value)} />
-                    <input placeholder="e.g. 7 days then stop" value={m.duration} onChange={(e) => setMed(i, 'duration', e.target.value)} />
+                    <input placeholder="Dose" value={m.dosage} onChange={(e) => setMed(i, 'dosage', e.target.value)} />
+                    <input placeholder="When" value={m.frequency} onChange={(e) => setMed(i, 'frequency', e.target.value)} />
+                    <input placeholder="Duration" value={m.duration} onChange={(e) => setMed(i, 'duration', e.target.value)} />
                     <input className="med-notes" placeholder="Notes" value={m.notes} onChange={(e) => setMed(i, 'notes', e.target.value)} />
                     <button type="button" className="icon-btn sm" aria-label="Remove" onClick={() => setMeds((ms) => (ms.length > 1 ? ms.filter((_, j) => j !== i) : [blank()]))}>
                       ×
@@ -206,10 +281,30 @@ export function PrescriptionDrawer({ patient: p, medicines, isAdmin, onClose, on
                   </div>
                 ))}
               </div>
+              <QuickPicks activeRow={activeRow} onPick={(k, v) => applyChip(k, v)} />
 
               <label>
                 <span>Advice <em className="opt">(one per line — numbered after the medicines)</em></span>
-                <textarea rows={3} value={advice} onChange={(e) => setAdvice(e.target.value)} placeholder={'Vit D3 60k IU capsule once weekly for 8 weeks\nReview after 20 days'} />
+                <textarea
+                  rows={3}
+                  className={adviceHot ? 'drop' : ''}
+                  value={advice}
+                  onChange={(e) => setAdvice(e.target.value)}
+                  placeholder={'Vit D3 60k IU capsule once weekly for 8 weeks\nReview after 20 days'}
+                  onDragOver={(e) => {
+                    if (!e.dataTransfer.types.includes(CHIP_MIME)) return;
+                    e.preventDefault();
+                    setAdviceHot(true);
+                  }}
+                  onDragLeave={() => setAdviceHot(false)}
+                  onDrop={(e) => {
+                    setAdviceHot(false);
+                    const chip = readChip(e);
+                    if (!chip) return;
+                    e.preventDefault();
+                    setAdvice((a) => appendAdvice(a, chip.value));
+                  }}
+                />
               </label>
             </form>
           )}
