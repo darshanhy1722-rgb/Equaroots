@@ -2,6 +2,7 @@ import { parse } from 'csv-parse/sync';
 import type { Queryable } from '../db.js';
 import { generatePrescriptionId, normalizeName } from '../lib/normalize.js';
 import { listDoctors, matchDoctor, upsertDoctorByName } from './doctors.js';
+import { assignPatientIdsAndFlags } from './patientIds.js';
 
 /**
  * Imports the old Google Sheet tabs (exported as CSV). Header names are matched
@@ -20,7 +21,7 @@ export interface SheetCsvs {
 export interface ImportSummary {
   doctors: { inserted: number; updated: number; skipped: string[] };
   medicines: { inserted: number; skipped: string[] };
-  bookings: { inserted: number; updated: number; skipped: string[] };
+  bookings: { inserted: number; updated: number; skipped: string[]; assigned?: number };
   consultations: { inserted: number; updated: number; skipped: string[] };
 }
 
@@ -69,7 +70,9 @@ function responsesJson(v: string | null): Record<string, string | null> {
   const out: Record<string, string | null> = {};
   if (!v) return out;
   try {
-    const o = JSON.parse(v);
+    let o = JSON.parse(v);
+    // The Cal.id export wraps answers as {"data": {...}}.
+    if (o && typeof o === 'object' && o.data && typeof o.data === 'object' && !Array.isArray(o.data)) o = { ...o.data };
     for (const [k, raw] of Object.entries(o ?? {})) {
       const val = raw && typeof raw === 'object' && 'value' in (raw as any) ? (raw as any).value : raw;
       if (typeof val === 'string' || typeof val === 'number') out[k.toLowerCase()] = String(val).trim() || null;
@@ -78,6 +81,54 @@ function responsesJson(v: string | null): Record<string, string | null> {
     /* not JSON — ignore */
   }
   return out;
+}
+
+/** Export statuses (Past/Upcoming/Cancelled/Unconfirmed) and Cal's own (ACCEPTED/CANCELLED/...). */
+function normaliseStatus(v: string | null): string | null {
+  if (!v) return null;
+  const u = v.trim().toUpperCase();
+  if (/^(CANCELL?ED|REJECTED)$/.test(u)) return 'CANCELLED';
+  if (/^(PAST|UPCOMING|ACCEPTED|CONFIRMED)$/.test(u)) return 'ACCEPTED';
+  if (/^(UNCONFIRMED|PENDING|AWAITING_HOST)$/.test(u)) return 'PENDING';
+  return u;
+}
+
+/** UTC offset the Cal.id export's local times are in (India by default). */
+const EXPORT_UTC_OFFSET = process.env.CAL_EXPORT_UTC_OFFSET ?? '+05:30';
+
+const MONTHS = ['january','february','march','april','may','june','july','august','september','october','november','december'];
+
+/**
+ * "15 July 2026" / "Tue, 6 Oct" + "5:00pm to 5:30pm" → ISO start/end in EXPORT_UTC_OFFSET.
+ * Upcoming rows in the Cal.id export omit the year; it's taken as the nearest such date
+ * (this year, or next year if that would be more than 60 days ago).
+ */
+export function calExportTimes(day: string | null, interval: string, now = new Date()): { start: string; end: string | null } | null {
+  const d = /^(?:[a-z]{3,9},?\s+)?(\d{1,2})\s+([a-z]+)(?:,?\s+(\d{4}))?$/i.exec((day ?? '').trim());
+  if (!d) return null;
+  const month = MONTHS.findIndex((m) => m.startsWith(d[2].toLowerCase().slice(0, 3)));
+  if (month < 0) return null;
+  if (!d[3]) {
+    let y = now.getUTCFullYear();
+    if (Date.UTC(y, month, Number(d[1])) < now.getTime() - 60 * 864e5) y += 1;
+    d[3] = String(y);
+  }
+  const toIso = (t: string | undefined, plusDay = 0): string | null => {
+    const m = /^(\d{1,2})(?::(\d{2}))?\s*(am|pm)?$/i.exec((t ?? '').trim());
+    if (!m) return null;
+    let h = Number(m[1]) % 12;
+    if ((m[3] ?? '').toLowerCase() === 'pm') h += 12;
+    if (!m[3] && Number(m[1]) === 12) h = 12;
+    const base = new Date(Date.UTC(Number(d[3]), month, Number(d[1]) + plusDay));
+    const ymd = base.toISOString().slice(0, 10);
+    return new Date(`${ymd}T${String(h).padStart(2, '0')}:${m[2] ?? '00'}:00${EXPORT_UTC_OFFSET}`).toISOString();
+  };
+  const [a, b] = interval.split(/\s+to\s+|\s*[-–]\s*/i);
+  const start = toIso(a);
+  if (!start) return null;
+  let end = toIso(b);
+  if (end && end < start) end = toIso(b, 1); // runs past midnight
+  return { start, end };
 }
 
 const cleanDescription = (v: string | null) => (v && !/^(na|n\/a|none|-)$/i.test(v.trim()) ? v : null);
@@ -160,21 +211,36 @@ export async function importSheetData(db: Queryable, csv: SheetCsvs): Promise<Im
       continue;
     }
     const calUid = get(r, 'booking uid', 'uid', 'cal uid', 'booking id', 'bookingid', 'id');
-    const doctorName = get(r, 'dr name', 'doctor', 'doctor name', 'dr', 'organizer', 'organizer name', 'host');
+    const host = get(r, 'host');
+    const doctorName = get(r, 'dr name', 'doctor', 'doctor name', 'dr', 'organizer', 'organizer name') ?? host;
     const doctorEmail = get(r, 'dr email', 'doctor email', 'organizer email', 'host email');
     const doctor = matchDoctor(doctors, { email: doctorEmail, name: doctorName });
-    const start = date(get(r, 'start time', 'starttime', 'start', 'date', 'booking date', 'appointment'));
-    // "status" is Cal's ACCEPTED/CANCELLED; a second "Status" column records "Prescription Sent".
-    const calStatus = get(r, 'status')?.toUpperCase() ?? null;
+    if (host && !doctor) {
+      // Cal.id export rows hosted by non-doctors (e.g. Cal.id onboarding calls) aren't patients.
+      s.bookings.skipped.push(`row ${i + 2}: host "${host}" isn't in the doctors list — skipped (add the doctor and re-import to include)`);
+      continue;
+    }
+    // Cal.id's bookings export has "Date" (15 July 2026) + "Interval" (5:00pm to 5:30pm) in local time.
+    const interval = get(r, 'interval');
+    const exportTimes = interval ? calExportTimes(get(r, 'date'), interval) : null;
+    const start = interval
+      ? exportTimes?.start ?? null
+      : date(get(r, 'start time', 'starttime', 'start', 'date', 'booking date', 'appointment'));
+    const end = interval ? exportTimes?.end ?? null : date(get(r, 'end time', 'endtime', 'end'));
+    if (interval && !start) s.bookings.skipped.push(`row ${i + 2}: couldn't read date "${get(r, 'date') ?? ''} ${interval}" — imported without a date`);
+    // "status" is Cal's ACCEPTED/CANCELLED (or the export's Past/Upcoming/Cancelled);
+    // a second "Status" column in the Sheet records "Prescription Sent".
+    const calStatus = normaliseStatus(get(r, 'status'));
     const sheetStatus = get(r, 'status 2');
     const status = calStatus === 'CANCELLED' ? 'CANCELLED' : sheetStatus || calStatus || 'ACCEPTED';
+    const attendeeEmail = get(r, 'attendees')?.split(/[;,]/)[0]?.trim() || null;
     const vals = [
       calUid, get(r, 'patient id', 'patientid', 'pat id'), get(r, 'patient type', 'type', 'new/existing'), name,
       get(r, 'age') ?? resp.age, get(r, 'gender', 'sex') ?? resp.gender,
-      get(r, 'patient email', 'patient emial', 'email', 'attendee email') ?? resp.email,
+      get(r, 'patient email', 'patient emial', 'email', 'attendee email') ?? resp.email ?? attendeeEmail,
       get(r, 'patient ph no', 'patient phone', 'phone', 'phone number', 'ph no', 'mobile') ?? resp.attendeephonenumber ?? resp.phone,
       doctor?.id ?? null, doctorName, doctorEmail,
-      start, date(get(r, 'end time', 'endtime', 'end')), get(r, 'meet link', 'video link', 'meeting link', 'meet'),
+      start, end, get(r, 'meet link', 'video link', 'meeting link', 'meet'),
       cleanDescription(get(r, 'description', 'notes') ?? resp.notes), status,
       get(r, 'drive link', 'pdf url', 'pdf link', 'prescription link'),
     ];
@@ -190,10 +256,15 @@ export async function importSheetData(db: Queryable, csv: SheetCsvs): Promise<Im
       ).rows[0]?.id ?? null;
     }
     if (existing) {
+      // Merge: a later file fills gaps (e.g. the Cal.id export adds dates to Sheet rows) but never
+      // wipes what's already there, and never downgrades "Prescription Sent" except to CANCELLED.
       await db.query(
         `update bookings set cal_uid=$1, patient_id=coalesce($2, patient_id), patient_type=coalesce($3, patient_type),
-           patient_name=$4, age=$5, gender=$6, patient_email=$7, patient_phone=$8, doctor_id=$9, doctor_name_raw=$10,
-           doctor_email_raw=$11, start_time=$12, end_time=$13, meet_link=$14, description=$15, status=$16,
+           patient_name=$4, age=coalesce($5, age), gender=coalesce($6, gender), patient_email=coalesce($7, patient_email),
+           patient_phone=coalesce($8, patient_phone), doctor_id=coalesce($9, doctor_id), doctor_name_raw=coalesce($10, doctor_name_raw),
+           doctor_email_raw=coalesce($11, doctor_email_raw), start_time=coalesce($12, start_time), end_time=coalesce($13, end_time),
+           meet_link=coalesce($14, meet_link), description=coalesce($15, description),
+           status=case when $16 = 'CANCELLED' then 'CANCELLED' when status = 'Prescription Sent' then status else $16 end,
            pdf_url=coalesce($17, pdf_url), updated_at=now() where id=$18`,
         [...vals, existing],
       );
@@ -209,6 +280,10 @@ export async function importSheetData(db: Queryable, csv: SheetCsvs): Promise<Im
     }
     if (!doctor) s.bookings.skipped.push(`row ${i + 2}: imported, but no doctor match for "${doctorName ?? ''}"`);
   }
+
+  // Bookings that arrived without a patient ID (new rows from a Cal.id export) get one, exactly as a
+  // webhook would: existing IDs are never changed, new ones continue the PAT-XXX sequence.
+  if (csv.bookings?.trim()) s.bookings.assigned = (await assignPatientIdsAndFlags(db)).length;
 
   // 4. Consultations — link by booking uid/id, else patient name + same calendar day.
   for (const [i, r] of rows(csv.consultations).entries()) {
@@ -265,7 +340,8 @@ export function formatSummary(s: ImportSummary): string {
   const lines = [
     `Doctors:       ${s.doctors.inserted} inserted, ${s.doctors.updated} updated, ${s.doctors.skipped.length} skipped`,
     `Medicines:     ${s.medicines.inserted} inserted, ${s.medicines.skipped.length} skipped`,
-    `Bookings:      ${s.bookings.inserted} inserted, ${s.bookings.updated} updated, ${s.bookings.skipped.length} notes`,
+    `Bookings:      ${s.bookings.inserted} inserted, ${s.bookings.updated} updated, ${s.bookings.skipped.length} notes` +
+      (s.bookings.assigned ? `, ${s.bookings.assigned} given new patient IDs` : ''),
     `Consultations: ${s.consultations.inserted} inserted, ${s.consultations.updated} updated, ${s.consultations.skipped.length} skipped`,
   ];
   for (const [k, v] of Object.entries(s)) for (const msg of v.skipped) lines.push(`  [${k}] ${msg}`);

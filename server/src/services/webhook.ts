@@ -63,7 +63,7 @@ export async function handleCalWebhook(raw: Buffer, signature: string | undefine
         let existingId: number | null = null;
         const found = await c.query<{ id: number; status: string }>(
           'select id, status from bookings where cal_uid = any($1::text[]) order by (cal_uid = $2) desc limit 1',
-          [[m.cal_uid, m.reschedule_from_uid].filter(Boolean), m.cal_uid],
+          [[m.cal_uid, m.reschedule_from_uid, ...m.booking_ids].filter(Boolean), m.cal_uid],
         );
         existingId = found.rows[0]?.id ?? null;
         const keepStatus = found.rows[0]?.status === 'Prescription Sent';
@@ -107,7 +107,7 @@ export async function handleCalWebhook(raw: Buffer, signature: string | undefine
     if (trigger === 'BOOKING_CANCELLED') {
       const upd = await pool.query(
         `update bookings set status='CANCELLED', updated_at=now() where cal_uid = any($1::text[]) returning id`,
-        [[m.cal_uid, m.reschedule_from_uid].filter(Boolean)],
+        [[m.cal_uid, m.reschedule_from_uid, ...m.booking_ids].filter(Boolean)],
       );
       const note = upd.rowCount ? `cancelled booking #${upd.rows[0].id}` : `cancel for unknown uid ${m.cal_uid}`;
       await log(pool, upd.rowCount! > 0, trigger, m.cal_uid, note, body);

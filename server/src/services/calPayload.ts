@@ -10,6 +10,8 @@ type Json = Record<string, any>;
 export interface MappedBooking {
   cal_uid: string | null;
   reschedule_from_uid: string | null;
+  /** Cal's numeric booking ids — rows imported from a Cal.id export are keyed by these. */
+  booking_ids: string[];
   patient_name: string;
   patient_email: string | null;
   patient_phone: string | null;
@@ -75,6 +77,9 @@ export function mapCalPayload(body: Json): MappedBooking {
   return {
     cal_uid: str(p.uid) ?? str(p.bookingUid) ?? (p.bookingId != null ? String(p.bookingId) : null),
     reschedule_from_uid: str(p.rescheduleUid) ?? str(p.fromReschedule) ?? str(p.rescheduledFromUid),
+    booking_ids: [p.bookingId, p.id, p.rescheduleId, p.fromRescheduleId]
+      .filter((x) => x != null && /^\d+$/.test(String(x)))
+      .map(String),
     patient_name: str(att.name) ?? pick(resp, ['name', 'fullName']) ?? 'Unknown patient',
     patient_email: str(att.email) ?? pick(resp, ['email']),
     patient_phone: phone,

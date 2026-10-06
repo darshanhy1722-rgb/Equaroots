@@ -352,3 +352,46 @@ describe('import: Booking Data export format', () => {
     expect(again).toMatchObject({ inserted: 0, updated: 3 });
   });
 });
+
+describe('import: Cal.id bookings export', () => {
+  // Synthetic rows in the exact layout of Cal.id's Bookings → Export CSV.
+  const header = 'ID,Title,Description,Status,Event,Date,Interval,Location,Host,Attendees,Paid,Currency,Amount,Payment Status,Rescheduled,Recurring Event ID,Is Recorded,Responses';
+  const csvRow = (cells: string[]) => cells.map((c) => `"${c.replace(/"/g, '""')}"`).join(',');
+  const resp = (d: object) => JSON.stringify({ data: d });
+  const row = (id: string, status: string, date: string, interval: string, host: string, d: object) =>
+    csvRow([id, 'Consult', '', status, 'EquaRoots: INR 299 First Consultation', date, interval, 'Google Meet', host, (d as any).email ?? '', 'false', '', '', '', '', '', 'false', resp(d)]);
+  const csv = [
+    header,
+    // same Cal booking id as a Sheet row imported earlier (900001) → fills in the date, keeps PAT-201 + Prescription Sent
+    row('900001', 'Past', '15 July 2026', '5:00pm to 5:30pm', 'Dr. Asha One', { name: 'Test One', email: 't1@x.com' }),
+    row('910001', 'Upcoming', 'Tue, 6 Oct', '4:00pm to 5:00pm', 'Dr. Asha One', { name: 'Fresh Person', email: 'fresh@x.com', attendeePhoneNumber: '+919111111111', Age: '28', Gender: 'Female' }),
+    row('910002', 'Cancelled', '1 August 2026', '10:00am to 10:30am', 'Dr Bina Two', { name: 'Gone', email: 'gone@x.com' }),
+    row('910003', 'Past', '2 August 2026', '10:00am to 10:30am', 'Onboarding Person', { name: 'Not A Patient', email: 'np@x.com' }),
+  ].join('\n');
+
+  it('merges with Sheet rows, reads India-time dates, skips non-doctor hosts, assigns new patient IDs', async () => {
+    const admin = await agentFor('admin@example.com');
+    const out = (await admin.post('/api/admin/import-csv').send({ bookings: csv }).expect(200)).body.summary.bookings;
+    expect(out).toMatchObject({ inserted: 2, updated: 1 });
+    expect(out.assigned).toBeGreaterThanOrEqual(1);
+    expect(out.skipped).toEqual([expect.stringContaining('host "Onboarding Person" isn\'t in the doctors list')]);
+    const rows = (await pool.query(
+      `select cal_uid, patient_name, patient_id, patient_type, status, start_time, age, gender, patient_phone, d.display_name doctor
+         from bookings b left join doctors d on d.id=b.doctor_id where cal_uid in ('900001','910001','910002') order by cal_uid`,
+    )).rows;
+    expect(rows[0]).toMatchObject({ cal_uid: '900001', patient_id: 'PAT-201', status: 'Prescription Sent', age: '30' });
+    expect(rows[0].start_time.toISOString()).toBe('2026-07-15T11:30:00.000Z');
+    expect(rows[1]).toMatchObject({ cal_uid: '910001', patient_name: 'Fresh Person', patient_type: 'New', status: 'ACCEPTED',
+      age: '28', gender: 'Female', patient_phone: '+919111111111', doctor: 'Dr Asha One' });
+    expect(rows[1].patient_id).toMatch(/^PAT-\d{3}$/);
+    expect(rows[2]).toMatchObject({ cal_uid: '910002', status: 'CANCELLED', patient_id: null, doctor: 'Dr. Bina Two' });
+  });
+
+  it('a later Cal.id webhook for an imported booking updates that row instead of duplicating it', async () => {
+    const before = (await pool.query("select id, patient_id from bookings where cal_uid='910001'")).rows[0];
+    const p = { ...booking('uid-string-abc', 'Fresh Person', 'fresh@x.com', '+919111111111', { name: 'Dr Asha One', email: 'hello@clinic.com' }, 20), bookingId: 910001 };
+    await calEvent('BOOKING_RESCHEDULED', p).expect(200);
+    const after = (await pool.query("select id, cal_uid, patient_id from bookings where patient_email='fresh@x.com'")).rows;
+    expect(after).toEqual([{ id: before.id, cal_uid: 'uid-string-abc', patient_id: before.patient_id }]);
+  });
+});

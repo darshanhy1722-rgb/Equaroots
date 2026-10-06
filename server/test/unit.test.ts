@@ -5,6 +5,7 @@ import { matchDoctor, type Doctor } from '../src/services/doctors.js';
 import { signBody, verifyCalSignature } from '../src/lib/signature.js';
 import { mapCalPayload } from '../src/services/calPayload.js';
 import { medicineSentence, renderPrescriptionHtml } from '../src/services/prescriptionTemplate.js';
+import { calExportTimes } from '../src/services/sheetImport.js';
 
 const b = (id: number, o: Partial<AssignableBooking>): AssignableBooking => ({
   id, patient_id: null, patient_email: null, patient_phone: null, status: 'ACCEPTED',
@@ -132,4 +133,23 @@ describe('letterhead template', () => {
     expect(html).toContain('class="hl">Co-founder Equaroots');
     expect(html).toContain('EQUAROOTS');
   });
+});
+
+describe('Cal.id export dates (India time)', () => {
+  const now = new Date('2026-10-06T06:00:00Z');
+  it('reads full dates', () => {
+    expect(calExportTimes('15 July 2026', '5:00pm to 5:30pm', now)).toEqual({
+      start: '2026-07-15T11:30:00.000Z', end: '2026-07-15T12:00:00.000Z',
+    });
+  });
+  it('reads year-less upcoming dates as the nearest one', () => {
+    expect(calExportTimes('Tue, 6 Oct', '4:00pm to 5:00pm', now)?.start).toBe('2026-10-06T10:30:00.000Z');
+    expect(calExportTimes('Sun, 18 Oct', '11:00am to 11:30am', now)?.start).toBe('2026-10-18T05:30:00.000Z');
+    expect(calExportTimes('Mon, 4 Jan', '12:00pm to 12:30pm', now)?.start).toBe('2027-01-04T06:30:00.000Z');
+  });
+  it('handles 12am/12pm and midnight crossings', () => {
+    expect(calExportTimes('1 Aug 2026', '12:00am to 12:30am', now)?.start).toBe('2026-07-31T18:30:00.000Z');
+    expect(calExportTimes('1 Aug 2026', '11:30pm to 12:15am', now)?.end).toBe('2026-08-01T18:45:00.000Z');
+  });
+  it('returns null for unreadable dates', () => expect(calExportTimes('someday', '5pm to 6pm', now)).toBeNull());
 });
