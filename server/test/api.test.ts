@@ -218,8 +218,12 @@ describe('prescriptions', () => {
     expect(sent.html).toContain('<b>Sun, 1 Mar 2026</b>, 10:30 am – 11:00 am (IST)');
     expect(sent.html).toContain(ER('01'));
 
+    // the returned link is relative (works on any host) and goes through the access-checked redirect
+    expect(out.pdfUrl).toBe(`/api/bookings/${c1}/pdf`);
+    const loc = (await admin.get(out.pdfUrl).expect(302)).headers.location;
+    expect(loc).toMatch(/^\/files\//); // relative: no APP_BASE_URL / localhost in it
     // signed PDF link works; tampered one does not
-    const url = new URL(out.pdfUrl);
+    const url = new URL(loc, 'http://any-host');
     await request(app).get(url.pathname + url.search).expect(200).expect('Content-Type', 'application/pdf');
     // Flip the first signature character (always a real change, even if it was already '0').
     const tampered = url.search.replace(/sig=(.)/, (_m, c: string) => `sig=${c === '0' ? '1' : '0'}`);
@@ -491,11 +495,11 @@ describe('Prescriptions tab (sent prescriptions)', () => {
     const radha = await agentFor('radha@equaroots.com');
     const c1 = (await radha.get('/api/prescriptions')).body.prescriptions.find((r: any) => r.impression === 'GAD');
     const r = await radha.get(`/api/bookings/${c1.bookingId}/pdf`).expect(302);
-    const u = new URL(r.headers.location);
+    const u = new URL(r.headers.location, 'http://any-host');
     const file = await request(app).get(u.pathname + u.search).expect(200).expect('Content-Type', 'application/pdf');
     expect(file.headers['content-disposition']).toMatch(/^inline/);
     const d = await radha.get(`/api/bookings/${c1.bookingId}/pdf?download=1`).expect(302);
-    const du = new URL(d.headers.location);
+    const du = new URL(d.headers.location, 'http://any-host');
     const dfile = await request(app).get(du.pathname + du.search).expect(200);
     expect(dfile.headers['content-disposition']).toMatch(/^attachment; filename="RX-\d{10}-Asha_Rao\.pdf"$/);
     const arjun = await agentFor('arjun@equaroots.com');
@@ -504,5 +508,23 @@ describe('Prescriptions tab (sent prescriptions)', () => {
     const admin = await agentFor('admin@example.com');
     const imp = (await admin.get('/api/prescriptions')).body.prescriptions.find((x: any) => x.imported && x.externalPdfUrl);
     expect((await admin.get(`/api/bookings/${imp.bookingId}/pdf`).expect(302)).headers.location).toBe(imp.externalPdfUrl);
+  });
+});
+
+describe('PDF survives lost storage', () => {
+  it('rebuilds a sent prescription PDF when the stored file is gone (e.g. redeploy wiped disk)', async () => {
+    const radha = await agentFor('radha@equaroots.com');
+    const c1 = (await radha.get('/api/prescriptions')).body.prescriptions.find((r: any) => r.impression === 'GAD');
+    const key = (await pool.query("select pdf_url from consultations where booking_id=$1 and status='Sent'", [c1.bookingId])).rows[0].pdf_url;
+    const file = path.resolve('./data/test-pdfs', key);
+    fs.rmSync(file);
+    expect(fs.existsSync(file)).toBe(false);
+    const loc = (await radha.get(`/api/bookings/${c1.bookingId}/pdf`).expect(302)).headers.location;
+    const u = new URL(loc, 'http://any-host');
+    const pdf = await request(app).get(u.pathname + u.search).buffer(true)
+      .parse((r, cb) => { const ch: Buffer[] = []; r.on('data', (x: Buffer) => ch.push(x)); r.on('end', () => cb(null, Buffer.concat(ch))); })
+      .expect(200).expect('Content-Type', 'application/pdf');
+    expect((pdf.body as Buffer).subarray(0, 4).toString()).toBe('%PDF');
+    expect(fs.existsSync(file)).toBe(true); // stored again
   });
 });

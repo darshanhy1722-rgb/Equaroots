@@ -1,7 +1,7 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { GetObjectCommand, PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
+import { GetObjectCommand, HeadObjectCommand, PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { config } from '../config.js';
 
@@ -61,7 +61,22 @@ export async function signedPdfUrl(key: string, opts: { download?: string } = {}
   }
   const exp = Math.floor(Date.now() / 1000) + SIGNED_URL_TTL_S;
   const dl = opts.download ? `&dl=${encodeURIComponent(opts.download)}` : '';
-  return `${config.appBaseUrl}/files/${encodeURI(key)}?exp=${exp}&sig=${localSig(key, exp)}${dl}`;
+  // Relative, so it works on whatever address the dashboard is opened on (no APP_BASE_URL needed).
+  return `/files/${encodeURI(key)}?exp=${exp}&sig=${localSig(key, exp)}${dl}`;
+}
+
+/** Whether a stored PDF is still there (local disk on hosts like Railway is wiped on redeploy). */
+export async function pdfExists(key: string): Promise<boolean> {
+  try {
+    if (s3) {
+      await s3.send(new HeadObjectCommand({ Bucket: config.storage.bucket, Key: key }));
+      return true;
+    }
+    await fs.access(localPath(key));
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /** Validates a local signed URL and returns the file bytes, or null. */

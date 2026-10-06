@@ -6,7 +6,7 @@ import { resolveActingDoctor, type Doctor } from './doctors.js';
 import { sendEmail } from './email.js';
 import { htmlToPdf } from './pdf.js';
 import { clinicQrSvg, renderPrescriptionHtml, type MedicineLine } from './prescriptionTemplate.js';
-import { putPdf, signedPdfUrl } from './storage.js';
+import { putPdf } from './storage.js';
 
 export interface PrescriptionInput {
   impression: string;
@@ -68,11 +68,11 @@ async function actingDoctorOrThrow(db: Queryable, b: BookingRow): Promise<Doctor
   return d;
 }
 
-async function buildPdfHtml(b: BookingRow, doctor: Doctor, input: PrescriptionInput, prescriptionId: string) {
+async function buildPdfHtml(b: BookingRow, doctor: Doctor, input: PrescriptionInput, prescriptionId: string, date = new Date()) {
   return renderPrescriptionHtml({
     qrSvg: await clinicQrSvg(),
     prescriptionId,
-    date: new Date(),
+    date,
     doctor,
     patient: {
       name: b.patient_name,
@@ -207,7 +207,7 @@ Your prescription is attached as a PDF.</p>
   }
 
   await pool.query(`update bookings set status='Prescription Sent', pdf_url=$2, updated_at=now() where id=$1`, [b.id, key]);
-  return { consultation: sent, pdfUrl: await signedPdfUrl(key) };
+  return { consultation: sent, pdfUrl: `/api/bookings/${b.id}/pdf` };
 }
 
 function escapeHtml(s: string) {
@@ -224,4 +224,22 @@ export function consultationWhen(start: Date | string | null, end: Date | string
   const hm = (d: Date) => d.toLocaleTimeString('en-US', { ...tz, hour: 'numeric', minute: '2-digit' }).toLowerCase();
   const e = end ? new Date(end) : null;
   return { date, time: e && !Number.isNaN(e.getTime()) ? `${hm(s)} – ${hm(e)}` : hm(s) };
+}
+
+/**
+ * Re-creates a sent prescription's PDF from what was saved (same RX number, sent date, treating
+ * doctor, signature and layout) — used when the stored file is gone, e.g. after a redeploy wiped
+ * local disk. The result is stored again under the same key.
+ */
+export async function rebuildSentPdf(b: BookingRow, c: ConsultationRow, key: string): Promise<Buffer> {
+  const doctor = await actingDoctorOrThrow(pool, b);
+  const input: PrescriptionInput = {
+    impression: c.impression ?? '',
+    progression: c.progression ?? '',
+    advice: c.advice ?? '',
+    medicines: c.medicines_json ?? [],
+  };
+  const pdf = await htmlToPdf(await buildPdfHtml(b, doctor, input, c.prescription_id, c.approved_at ? new Date(c.approved_at) : new Date()));
+  await putPdf(key, pdf);
+  return pdf;
 }

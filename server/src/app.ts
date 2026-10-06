@@ -10,11 +10,11 @@ import { HttpError, loadBookingForViewer } from './services/access.js';
 import { listDoctors, validateSignature, type Doctor } from './services/doctors.js';
 import { htmlToPdf } from './services/pdf.js';
 import { clinicQrSvg, isLayout, LETTERHEAD_LAYOUTS, renderPrescriptionHtml } from './services/prescriptionTemplate.js';
-import { approveAndSend, latestConsultation, previewPdf, sanitizeInput, saveDraft } from './services/prescriptions.js';
+import { approveAndSend, latestConsultation, rebuildSentPdf, type ConsultationRow, previewPdf, sanitizeInput, saveDraft } from './services/prescriptions.js';
 import { formatRegisterSummary, importPatientRegister, registerRowsFromCsv, registerRowsFromTable } from './services/patientRegister.js';
 import { rotateCalWebhookSecret } from './services/settings.js';
 import { formatSummary, importSheetData } from './services/sheetImport.js';
-import { readLocalSigned, signedPdfUrl } from './services/storage.js';
+import { pdfExists, readLocalSigned, signedPdfUrl } from './services/storage.js';
 import { handleCalWebhook } from './services/webhook.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -162,7 +162,7 @@ export function createApp() {
       [pid, exclude || null],
     );
     const history = await Promise.all(
-      rows.map(async ({ pdfKey, ...r }) => ({ ...r, pdfUrl: pdfKey && !/^https?:/.test(pdfKey) ? await signedPdfUrl(pdfKey) : pdfKey })),
+      rows.map(async ({ pdfKey, ...r }) => ({ ...r, pdfUrl: pdfKey ? (/^https?:/.test(pdfKey) ? pdfKey : `/api/bookings/${r.bookingId}/pdf`) : null })),
     );
     res.json({ ok: true, history });
   }));
@@ -183,7 +183,7 @@ export function createApp() {
         approvedAt: c.approved_at,
         updatedAt: c.updated_at,
       },
-      pdfUrl: pdfKey ? (/^https?:/.test(pdfKey) ? pdfKey : await signedPdfUrl(pdfKey)) : null,
+      pdfUrl: pdfKey ? (/^https?:/.test(pdfKey) ? pdfKey : `/api/bookings/${b.id}/pdf`) : null,
     });
   }));
 
@@ -238,8 +238,8 @@ export function createApp() {
   authed.get('/bookings/:bookingId/pdf', h(async (req, res) => {
     const b = await loadBookingForViewer(pool, req.viewer!, Number(req.params.bookingId));
     const c = (
-      await pool.query<{ pdf_url: string | null; prescription_id: string | null }>(
-        `select pdf_url, prescription_id from consultations where booking_id=$1 and pdf_url is not null
+      await pool.query<ConsultationRow>(
+        `select * from consultations where booking_id=$1 and pdf_url is not null
           order by approved_at desc nulls last, id desc limit 1`,
         [b.id],
       )
@@ -247,6 +247,11 @@ export function createApp() {
     const ref = c?.pdf_url ?? b.pdf_url;
     if (!ref) throw new HttpError(404, 'No prescription PDF for this booking');
     if (/^https?:/.test(ref)) return res.redirect(302, ref);
+    if (!(await pdfExists(ref))) {
+      // Stored file is gone (e.g. redeploy wiped local disk) — rebuild it from the saved prescription.
+      if (!c || c.status !== 'Sent') throw new HttpError(404, 'The PDF file is no longer in storage');
+      await rebuildSentPdf(b, c, ref);
+    }
     const name = `${c?.prescription_id ?? 'prescription'}-${(b.patient_name || 'patient').replace(/[^\w]+/g, '_')}.pdf`;
     res.setHeader('Cache-Control', 'no-store');
     res.redirect(302, await signedPdfUrl(ref, req.query.download ? { download: name } : {}));
