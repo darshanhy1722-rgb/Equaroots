@@ -264,3 +264,8 @@ textarea.drop { border-color: var(--brand-2); box-shadow: 0 0 0 3px var(--brand-
   .med-row .med-name, .med-row .med-notes { grid-column: span 2; }
   .qp-label { width: 100%; }
 }
+
+.toggle { display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--line); background: var(--surface); border-radius: 999px; padding: 6px 12px; font-size: 13px; cursor: pointer; color: var(--muted); user-select: none; }
+.toggle input { accent-color: var(--brand); margin: 0; }
+.toggle .count { background: var(--bg); border-radius: 999px; padding: 0 7px; font-size: 12px; }
+.toggle.on { color: var(--text); border-color: #b9cdb8; }

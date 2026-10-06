@@ -90,28 +90,50 @@ export default function App() {
   // "New in 24h" = arrived from Cal.id in the last 24 hours (Sheet imports don't count).
   const isFresh = useCallback((p: Patient) => p.fromCal && now - new Date(p.createdAt).getTime() < 864e5, [now]);
 
+  // Cancelled bookings (they never get a patient ID) are hidden unless asked for.
+  const [showCancelled, setShowCancelled] = useState(() => {
+    try {
+      return localStorage.getItem('er_show_cancelled') === '1';
+    } catch {
+      return false;
+    }
+  });
+  const toggleCancelled = (v: boolean) => {
+    setShowCancelled(v);
+    try {
+      localStorage.setItem('er_show_cancelled', v ? '1' : '0');
+    } catch {
+      /* per-browser preference only */
+    }
+  };
+  const cancelledCount = useMemo(() => patients.filter((p) => p.status === 'CANCELLED').length, [patients]);
+  const shown = useMemo(
+    () => (showCancelled ? patients : patients.filter((p) => p.status !== 'CANCELLED')),
+    [patients, showCancelled],
+  );
+
   const counts = useMemo(
     () => ({
-      all: patients.length,
-      New: patients.filter((p) => p.patientType === 'New').length,
-      Existing: patients.filter((p) => p.patientType === 'Existing').length,
-      pending: patients.filter(isPendingRx).length,
+      all: shown.length,
+      New: shown.filter((p) => p.patientType === 'New').length,
+      Existing: shown.filter((p) => p.patientType === 'Existing').length,
+      pending: shown.filter(isPendingRx).length,
     }),
-    [patients],
+    [shown],
   );
 
   const whenCounts = useMemo(() => {
-    const active = patients.filter((p) => p.status !== 'CANCELLED');
-    const c = { all: patients.length, today: 0, upcoming: 0, past: 0, nodate: 0, fresh: 0 };
+    const active = shown.filter((p) => p.status !== 'CANCELLED');
+    const c = { all: shown.length, today: 0, upcoming: 0, past: 0, nodate: 0, fresh: 0 };
     for (const p of active) c[whenOf(p)]++;
-    c.fresh = patients.filter(isFresh).length;
+    c.fresh = shown.filter(isFresh).length;
     return c;
-  }, [patients, isFresh]);
+  }, [shown, isFresh]);
 
   const visible = useMemo(() => {
     const needle = q.trim().toLowerCase();
     const digits = needle.replace(/\D/g, '');
-    return patients.filter((p) => {
+    return shown.filter((p) => {
       if (filter === 'New' && p.patientType !== 'New') return false;
       if (filter === 'Existing' && p.patientType !== 'Existing') return false;
       if (filter === 'pending' && !isPendingRx(p)) return false;
@@ -125,7 +147,7 @@ export default function App() {
         (digits.length >= 3 && (p.phone ?? '').replace(/\D/g, '').includes(digits))
       );
     });
-  }, [patients, q, filter, when, isFresh]);
+  }, [shown, q, filter, when, isFresh]);
 
   const sections = useMemo(
     () =>
@@ -248,6 +270,10 @@ export default function App() {
             ))}
           </select>
         )}
+        <label className={`toggle ${showCancelled ? 'on' : ''}`} title="Cancelled bookings have no patient ID">
+          <input type="checkbox" checked={showCancelled} onChange={(e) => toggleCancelled(e.target.checked)} />
+          Show cancelled <span className="count">{cancelledCount}</span>
+        </label>
         <button className="btn ghost sm refresh" onClick={() => loadPatients()} disabled={loadingList} title="Refresh (also checks automatically every minute)">
           ↻
         </button>
