@@ -212,7 +212,10 @@ describe('prescriptions', () => {
     // signed PDF link works; tampered one does not
     const url = new URL(out.pdfUrl);
     await request(app).get(url.pathname + url.search).expect(200).expect('Content-Type', 'application/pdf');
-    await request(app).get(url.pathname + url.search.replace(/sig=./, 'sig=0')).expect(403);
+    // Flip the first signature character (always a real change, even if it was already '0').
+    const tampered = url.search.replace(/sig=(.)/, (_m, c: string) => `sig=${c === '0' ? '1' : '0'}`);
+    expect(tampered).not.toBe(url.search);
+    await request(app).get(url.pathname + tampered).expect(403);
   });
 
   it('history excludes the current booking', async () => {
