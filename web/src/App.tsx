@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { api, ApiError, type Bootstrap, type Patient } from './api';
 import { AdminPage } from './components/AdminPage';
 import { Login, NotSetUp } from './components/Login';
@@ -6,6 +6,15 @@ import { PatientCard } from './components/PatientCard';
 import { PrescriptionDrawer } from './components/PrescriptionDrawer';
 import { SignatureModal } from './components/SignatureModal';
 import { Toast, useToast } from './components/Toast';
+import { relativeDay, sortForSection, whenOf, type When } from './dates';
+
+type WhenFilter = 'all' | When | 'fresh';
+const SECTIONS: [When, string][] = [
+  ['today', 'Today'],
+  ['upcoming', 'Upcoming'],
+  ['past', 'Past'],
+  ['nodate', 'No appointment date'],
+];
 
 type Filter = 'all' | 'New' | 'Existing' | 'pending';
 
@@ -20,6 +29,9 @@ export default function App() {
   const [open, setOpen] = useState<Patient | null>(null);
   const [page, setPage] = useState<'patients' | 'admin'>('patients');
   const [signing, setSigning] = useState(false);
+  const [when, setWhen] = useState<WhenFilter>('all');
+  const [now, setNow] = useState(() => Date.now());
+  const knownIds = useRef<Set<number> | null>(null);
   const toast = useToast();
 
   const loadBoot = useCallback(async () => {
@@ -36,21 +48,47 @@ export default function App() {
     loadBoot();
   }, [loadBoot]);
 
-  const loadPatients = useCallback(async () => {
-    if (!boot?.authorized) return;
-    setLoadingList(true);
-    try {
-      setPatients(await api.patients(boot.isAdmin ? doctorId : null));
-    } catch (e) {
-      toast.show((e as Error).message, 'error');
-    } finally {
-      setLoadingList(false);
-    }
-  }, [boot, doctorId, toast]);
+  const loadPatients = useCallback(
+    async (silent = false) => {
+      if (!boot?.authorized) return;
+      if (!silent) setLoadingList(true);
+      try {
+        const list = await api.patients(boot.isAdmin ? doctorId : null);
+        const known = knownIds.current;
+        if (known) {
+          const arrived = list.filter((p) => !known.has(p.bookingId));
+          if (arrived.length === 1) {
+            const p = arrived[0];
+            toast.show(`New booking: ${p.name}${p.startTime ? ` · ${relativeDay(p.startTime) || fmtShort(p.startTime)}` : ''}`, 'info');
+          } else if (arrived.length > 1) toast.show(`${arrived.length} new bookings arrived`, 'info');
+        }
+        knownIds.current = new Set(list.map((p) => p.bookingId));
+        setPatients(list);
+        setNow(Date.now());
+      } catch (e) {
+        if (!silent) toast.show((e as Error).message, 'error');
+      } finally {
+        if (!silent) setLoadingList(false);
+      }
+    },
+    [boot, doctorId, toast],
+  );
 
   useEffect(() => {
+    knownIds.current = null; // switching doctor filter isn't "new bookings"
     loadPatients();
   }, [loadPatients]);
+
+  // Check for new bookings every minute while the tab is visible.
+  useEffect(() => {
+    const id = window.setInterval(() => {
+      if (document.visibilityState === 'visible') loadPatients(true);
+    }, 60_000);
+    return () => window.clearInterval(id);
+  }, [loadPatients]);
+
+  // "New in 24h" = arrived from Cal.id in the last 24 hours (Sheet imports don't count).
+  const isFresh = useCallback((p: Patient) => p.fromCal && now - new Date(p.createdAt).getTime() < 864e5, [now]);
 
   const counts = useMemo(
     () => ({
@@ -62,6 +100,14 @@ export default function App() {
     [patients],
   );
 
+  const whenCounts = useMemo(() => {
+    const active = patients.filter((p) => p.status !== 'CANCELLED');
+    const c = { all: patients.length, today: 0, upcoming: 0, past: 0, nodate: 0, fresh: 0 };
+    for (const p of active) c[whenOf(p)]++;
+    c.fresh = patients.filter(isFresh).length;
+    return c;
+  }, [patients, isFresh]);
+
   const visible = useMemo(() => {
     const needle = q.trim().toLowerCase();
     const digits = needle.replace(/\D/g, '');
@@ -69,6 +115,8 @@ export default function App() {
       if (filter === 'New' && p.patientType !== 'New') return false;
       if (filter === 'Existing' && p.patientType !== 'Existing') return false;
       if (filter === 'pending' && !isPendingRx(p)) return false;
+      if (when === 'fresh' && !isFresh(p)) return false;
+      if (when !== 'all' && when !== 'fresh' && whenOf(p) !== when) return false;
       if (!needle) return true;
       return (
         p.name.toLowerCase().includes(needle) ||
@@ -77,7 +125,15 @@ export default function App() {
         (digits.length >= 3 && (p.phone ?? '').replace(/\D/g, '').includes(digits))
       );
     });
-  }, [patients, q, filter]);
+  }, [patients, q, filter, when, isFresh]);
+
+  const sections = useMemo(
+    () =>
+      SECTIONS.map(([k, label]) => ({ k, label, items: sortForSection(visible.filter((p) => whenOf(p) === k), k) })).filter(
+        (s) => s.items.length,
+      ),
+    [visible],
+  );
 
   if (state === 'loading') return <div className="center muted">Loading…</div>;
   if (state === 'signed-out') return <Login onSignedIn={loadBoot} />;
@@ -132,6 +188,23 @@ export default function App() {
           <button className="btn primary sm" onClick={() => setSigning(true)}>Add signature</button>
         </div>
       )}
+      <div className="tiles">
+        {(
+          [
+            ['today', 'Today', 'appointments'],
+            ['upcoming', 'Upcoming', 'after today'],
+            ['fresh', 'New in 24h', 'booked in the last 24 hours'],
+            ['past', 'Past', 'consultations'],
+            ['all', 'All', 'bookings'],
+          ] as [WhenFilter, string, string][]
+        ).map(([k, label, sub]) => (
+          <button key={k} className={`tile ${when === k ? 'on' : ''} ${k === 'fresh' && whenCounts.fresh ? 'hot' : ''}`} onClick={() => setWhen(k)}>
+            <span className="tile-n">{whenCounts[k as keyof typeof whenCounts]}</span>
+            <span className="tile-l">{label}</span>
+            <span className="tile-s">{sub}</span>
+          </button>
+        ))}
+      </div>
       <div className="toolbar">
         <div className="search">
           <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden>
@@ -175,7 +248,7 @@ export default function App() {
             ))}
           </select>
         )}
-        <button className="btn ghost sm refresh" onClick={loadPatients} disabled={loadingList} title="Refresh">
+        <button className="btn ghost sm refresh" onClick={() => loadPatients()} disabled={loadingList} title="Refresh (also checks automatically every minute)">
           ↻
         </button>
       </div>
@@ -186,8 +259,17 @@ export default function App() {
         ) : visible.length === 0 ? (
           <div className="empty muted">No patients match.</div>
         ) : (
-          visible.map((p) => (
-            <PatientCard key={p.bookingId} p={p} showDoctor={boot!.isAdmin} onOpen={() => setOpen(p)} />
+          sections.map((sec) => (
+            <section key={sec.k} className="day-section">
+              <h2 className="section-h">
+                {sec.label} <span className="count">{sec.items.length}</span>
+              </h2>
+              <div className="cards">
+                {sec.items.map((p) => (
+                  <PatientCard key={p.bookingId} p={p} showDoctor={boot!.isAdmin} fresh={isFresh(p)} onOpen={() => setOpen(p)} />
+                ))}
+              </div>
+            </section>
           ))
         )}
       </main>
@@ -215,6 +297,10 @@ export default function App() {
       <Toast state={toast.state} />
     </div>
   );
+}
+
+function fmtShort(iso: string) {
+  return new Date(iso).toLocaleString('en-IN', { day: '2-digit', month: 'short', hour: 'numeric', minute: '2-digit', timeZone: 'Asia/Kolkata' });
 }
 
 export function isPendingRx(p: Patient) {

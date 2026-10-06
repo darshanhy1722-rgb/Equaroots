@@ -110,6 +110,7 @@ describe('auth + visibility', () => {
   it('doctors only see their own patients; admins see all + can filter', async () => {
     const radha = await agentFor('radha@equaroots.com');
     const mine = (await radha.get('/api/patients').expect(200)).body.patients;
+    expect(mine[0]).toMatchObject({ fromCal: true, createdAt: expect.any(String) });
     expect(mine.map((p: any) => p.calUid).sort()).toEqual(['c1', 'c3']);
     // doctor_id filter is ignored for non-admins
     const arjunId = (await pool.query("select id from doctors where email='arjun@equaroots.com'")).rows[0].id;

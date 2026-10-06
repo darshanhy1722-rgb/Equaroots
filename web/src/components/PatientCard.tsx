@@ -1,4 +1,5 @@
 import type { Patient } from '../api';
+import { relativeDay } from '../dates';
 
 export function fmtWhen(iso: string | null) {
   if (!iso) return '—';
@@ -18,10 +19,12 @@ export function statusLabel(p: Pick<Patient, 'status' | 'rxStatus'>) {
   return { text: 'Pending Rx', cls: 'pending' };
 }
 
-export function PatientCard({ p, showDoctor, onOpen }: { p: Patient; showDoctor: boolean; onOpen: () => void }) {
+export function PatientCard({ p, showDoctor, fresh, onOpen }: { p: Patient; showDoctor: boolean; fresh?: boolean; onOpen: () => void }) {
   const s = statusLabel(p);
+  const rel = relativeDay(p.startTime);
   return (
-    <button className="card" onClick={onOpen}>
+    <button className={`card ${fresh ? 'fresh' : ''}`} onClick={onOpen}>
+      {fresh && <span className="fresh-tag">● New booking</span>}
       <div className="card-top">
         <div className="card-name">{p.name}</div>
         {p.patientType && <span className={`badge ${p.patientType.toLowerCase()}`}>{p.patientType}</span>}
@@ -33,7 +36,9 @@ export function PatientCard({ p, showDoctor, onOpen }: { p: Patient; showDoctor:
       </div>
       <div className="card-foot">
         <span className={`status ${s.cls}`}>{s.text}</span>
-        <span className="when">{fmtWhen(p.startTime)}</span>
+        <span className={`when ${rel ? 'soon' : ''}`}>
+          {rel ? `${rel}, ${new Date(p.startTime!).toLocaleTimeString('en-IN', { hour: 'numeric', minute: '2-digit', timeZone: 'Asia/Kolkata' })}` : fmtWhen(p.startTime)}
+        </span>
       </div>
       {showDoctor && <div className="card-doctor">{p.doctorName ?? 'Unassigned doctor'}</div>}
     </button>

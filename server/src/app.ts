@@ -125,7 +125,8 @@ export function createApp() {
               b.doctor_id as "doctorId", coalesce(d.display_name, b.doctor_name_raw) as "doctorName",
               b.start_time as "startTime", b.end_time as "endTime", b.meet_link as "meetLink",
               b.description, b.status, (b.pdf_url is not null) as "hasPdf",
-              c.status as "rxStatus", c.prescription_id as "prescriptionId"
+              c.status as "rxStatus", c.prescription_id as "prescriptionId",
+              b.created_at as "createdAt", (b.raw_payload is not null) as "fromCal"
          from bookings b
          left join doctors d on d.id = b.doctor_id
          left join lateral (select status, prescription_id from consultations

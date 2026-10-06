@@ -52,6 +52,10 @@ export interface Patient {
   hasPdf: boolean;
   rxStatus: 'Draft' | 'Sent' | null;
   prescriptionId: string | null;
+  /** When the booking reached the dashboard. */
+  createdAt: string;
+  /** Arrived through the Cal.id webhook (false for rows imported from the Sheet). */
+  fromCal: boolean;
 }
 export interface MedLine {
   name: string;
