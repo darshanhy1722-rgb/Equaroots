@@ -5,12 +5,13 @@ import cookieParser from 'cookie-parser';
 import express, { type NextFunction, type Request, type Response } from 'express';
 import { clearSession, issueSession, requireAdmin, requireAuthorized, requireSession, verifyGoogleCredential } from './auth.js';
 import { config } from './config.js';
-import { pool } from './db.js';
+import { pool, withTransaction } from './db.js';
 import { HttpError, loadBookingForViewer } from './services/access.js';
 import { listDoctors, validateSignature, type Doctor } from './services/doctors.js';
 import { htmlToPdf } from './services/pdf.js';
 import { clinicQrSvg, isLayout, LETTERHEAD_LAYOUTS, renderPrescriptionHtml } from './services/prescriptionTemplate.js';
 import { approveAndSend, latestConsultation, previewPdf, sanitizeInput, saveDraft } from './services/prescriptions.js';
+import { formatRegisterSummary, importPatientRegister, registerRowsFromCsv, registerRowsFromTable } from './services/patientRegister.js';
 import { rotateCalWebhookSecret } from './services/settings.js';
 import { formatSummary, importSheetData } from './services/sheetImport.js';
 import { readLocalSigned, signedPdfUrl } from './services/storage.js';
@@ -261,7 +262,7 @@ export function createApp() {
       prescriptionId: 'RX-SAMPLE',
       date: new Date(),
       doctor: d,
-      patient: { name: 'Sample Patient', patientId: 'PAT-000', age: '30', gender: 'Male', phone: '+91 90000 00000', email: 'patient@example.com', consultationAt: new Date() },
+      patient: { name: 'Sample Patient', patientId: 'ER/26/00', age: '30', gender: 'Male', phone: '+91 90000 00000', email: 'patient@example.com', consultationAt: new Date() },
       impression: 'Generalised anxiety disorder with initial insomnia',
       progression: 'Sleep improved; mild residual anxiety on work days',
       medicines: [
@@ -367,6 +368,19 @@ export function createApp() {
     const { doctors, medicines, bookings, consultations } = req.body ?? {};
     const summary = await importSheetData(pool, { doctors, medicines, bookings, consultations });
     res.json({ ok: true, summary, text: formatSummary(summary) });
+  }));
+
+  authed.post('/admin/import-patient-register', requireAdmin, h(async (req, res) => {
+    const { table, csv } = req.body ?? {};
+    let rows;
+    try {
+      rows = Array.isArray(table) ? registerRowsFromTable(table) : registerRowsFromCsv(String(csv ?? ''));
+    } catch (e: any) {
+      throw new HttpError(400, e.message);
+    }
+    if (!rows.length) throw new HttpError(400, 'The register is empty');
+    const summary = await withTransaction((c) => importPatientRegister(c, rows));
+    res.json({ ok: true, summary, text: formatRegisterSummary(summary) });
   }));
 
   authed.post('/admin/reassign-token', requireAdmin, h(async (_req, res) => {

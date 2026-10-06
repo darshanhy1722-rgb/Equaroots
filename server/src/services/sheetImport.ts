@@ -282,7 +282,7 @@ export async function importSheetData(db: Queryable, csv: SheetCsvs): Promise<Im
   }
 
   // Bookings that arrived without a patient ID (new rows from a Cal.id export) get one, exactly as a
-  // webhook would: existing IDs are never changed, new ones continue the PAT-XXX sequence.
+  // webhook would: existing IDs are never changed, new ones continue the ER/<yy>/<nn> sequence.
   if (csv.bookings?.trim()) s.bookings.assigned = (await assignPatientIdsAndFlags(db)).length;
 
   // 4. Consultations — link by booking uid/id, else patient name + same calendar day.

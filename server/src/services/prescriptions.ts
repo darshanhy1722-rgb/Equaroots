@@ -176,19 +176,26 @@ export async function approveAndSend(viewer: Viewer, bookingId: number, input: P
   });
 
   const pdf = await htmlToPdf(await buildPdfHtml(b, doctor, input, consult.prescription_id));
-  const key = `prescriptions/${b.patient_id ?? 'unassigned'}/${consult.prescription_id}.pdf`;
+  const key = `prescriptions/${(b.patient_id ?? 'unassigned').replace(/[^A-Za-z0-9-]+/g, '-')}/${consult.prescription_id}.pdf`;
   await putPdf(key, pdf);
 
   const sent = await upsertConsultation(pool, b, doctor, input, 'Sent', consult, key);
 
   const firstName = b.patient_name.split(/\s+/)[0] ?? b.patient_name;
+  const when = consultationWhen(b.start_time, b.end_time);
   try {
     await sendEmail({
       to: b.patient_email,
-      subject: `Your prescription from ${doctor.display_name} — EquaRoots`,
+      subject: `Your prescription from ${doctor.display_name}${when ? ` — consultation on ${when.date}` : ''} · EquaRoots`,
       html: `<p>Dear ${escapeHtml(firstName)},</p>
 <p>Thank you for consulting with <b>${escapeHtml(doctor.display_name)}</b>${doctor.role ? ` (${escapeHtml(doctor.role)})` : ''} at EquaRoots.
-Your prescription <b>${sent.prescription_id}</b> is attached as a PDF.</p>
+Your prescription is attached as a PDF.</p>
+<table cellpadding="6" cellspacing="0" style="border-collapse:collapse;border:1px solid #dfe8dc;font-size:14px;margin:8px 0 14px">
+  ${when ? `<tr><td style="color:#5f6f63;border-bottom:1px solid #eef3ec">Consultation</td><td style="border-bottom:1px solid #eef3ec"><b>${when.date}</b>, ${when.time} (IST)</td></tr>` : ''}
+  <tr><td style="color:#5f6f63;border-bottom:1px solid #eef3ec">Doctor</td><td style="border-bottom:1px solid #eef3ec">${escapeHtml(doctor.display_name)}</td></tr>
+  ${b.patient_id ? `<tr><td style="color:#5f6f63;border-bottom:1px solid #eef3ec">Patient ID</td><td style="border-bottom:1px solid #eef3ec">${escapeHtml(b.patient_id)}</td></tr>` : ''}
+  <tr><td style="color:#5f6f63">Prescription</td><td>${sent.prescription_id}</td></tr>
+</table>
 <p>If you have any questions, simply reply to this email.</p>
 <p>Warm regards,<br>${escapeHtml(doctor.display_name)}<br>EquaRoots</p>`,
       attachment: { filename: `${sent.prescription_id}.pdf`, content: pdf },
@@ -205,4 +212,16 @@ Your prescription <b>${sent.prescription_id}</b> is attached as a PDF.</p>
 
 function escapeHtml(s: string) {
   return s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]!);
+}
+
+/** "Tue, 6 Oct 2026" + "4:00 pm – 5:00 pm" in India time, from the booking's appointment slot. */
+export function consultationWhen(start: Date | string | null, end: Date | string | null): { date: string; time: string } | null {
+  if (!start) return null;
+  const s = new Date(start);
+  if (Number.isNaN(s.getTime())) return null;
+  const tz = { timeZone: 'Asia/Kolkata' } as const;
+  const date = s.toLocaleDateString('en-GB', { ...tz, weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' });
+  const hm = (d: Date) => d.toLocaleTimeString('en-US', { ...tz, hour: 'numeric', minute: '2-digit' }).toLowerCase();
+  const e = end ? new Date(end) : null;
+  return { date, time: e && !Number.isNaN(e.getTime()) ? `${hm(s)} – ${hm(e)}` : hm(s) };
 }

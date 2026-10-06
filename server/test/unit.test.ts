@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { generatePrescriptionId, normalizeEmail, normalizeName, normalizePhone } from '../src/lib/normalize.js';
+import { formatPatientId, generatePrescriptionId, normalizeEmail, normalizeName, normalizePatientId, normalizePhone, patientIdYear } from '../src/lib/normalize.js';
+
+const Y = patientIdYear();
 import { computePatientAssignments, type AssignableBooking } from '../src/services/patientIds.js';
 import { matchDoctor, type Doctor } from '../src/services/doctors.js';
 import { signBody, verifyCalSignature } from '../src/lib/signature.js';
@@ -24,6 +26,26 @@ describe('normalisation', () => {
   });
 });
 
+describe('clinic patient IDs (ER/yy/nn)', () => {
+  it('formats and normalises register IDs', () => {
+    expect(formatPatientId(7, '26')).toBe('ER/26/07');
+    expect(formatPatientId(151, '26')).toBe('ER/26/151');
+    expect(normalizePatientId('PID ER/26/146')).toBe('ER/26/146');
+    expect(normalizePatientId(' er / 26 / 5 ')).toBe('ER/26/05');
+    expect(normalizePatientId('PAT-001')).toBeNull();
+  });
+  it('register patients keep their ID; new ones continue after the highest this year', () => {
+    const out = computePatientAssignments(
+      [b(1, { patient_email: 'Known@x.com' }), b(2, { patient_email: 'new@x.com' }), b(3, { patient_id: 'PAT-001', patient_email: 'old@x.com' })],
+      [{ patient_id: `ER/${Y}/150`, email: 'known@x.com' }, { patient_id: 'ER/20/999', email: 'ancient@x.com' }],
+    );
+    expect(out).toEqual([
+      { id: 1, patient_id: `ER/${Y}/150`, patient_type: 'Existing' },
+      { id: 2, patient_id: `ER/${Y}/151`, patient_type: 'New' },
+    ]);
+  });
+});
+
 describe('computePatientAssignments', () => {
   it('assigns oldest-first, reuses IDs by phone or email', () => {
     const out = computePatientAssignments([
@@ -33,22 +55,22 @@ describe('computePatientAssignments', () => {
       b(4, { patient_email: ' A@X.com' }),
     ]);
     expect(out).toEqual([
-      { id: 1, patient_id: 'PAT-001', patient_type: 'New' },
-      { id: 2, patient_id: 'PAT-002', patient_type: 'New' },
-      { id: 3, patient_id: 'PAT-001', patient_type: 'Existing' },
-      { id: 4, patient_id: 'PAT-001', patient_type: 'Existing' },
+      { id: 1, patient_id: `ER/${Y}/01`, patient_type: 'New' },
+      { id: 2, patient_id: `ER/${Y}/02`, patient_type: 'New' },
+      { id: 3, patient_id: `ER/${Y}/01`, patient_type: 'Existing' },
+      { id: 4, patient_id: `ER/${Y}/01`, patient_type: 'Existing' },
     ]);
   });
   it('is idempotent and continues numbering after existing IDs', () => {
     const rows = [
-      b(1, { patient_id: 'PAT-007', patient_email: 'old@x.com' }),
+      b(1, { patient_id: `ER/${Y}/07`, patient_email: 'old@x.com' }),
       b(2, { patient_email: 'old@x.com' }),
       b(3, { patient_email: 'new@x.com' }),
     ];
     const out = computePatientAssignments(rows);
     expect(out).toEqual([
-      { id: 2, patient_id: 'PAT-007', patient_type: 'Existing' },
-      { id: 3, patient_id: 'PAT-008', patient_type: 'New' },
+      { id: 2, patient_id: `ER/${Y}/07`, patient_type: 'Existing' },
+      { id: 3, patient_id: `ER/${Y}/08`, patient_type: 'New' },
     ]);
     const applied = rows.map((r) => ({ ...r, patient_id: out.find((o) => o.id === r.id)?.patient_id ?? r.patient_id }));
     expect(computePatientAssignments(applied)).toEqual([]);
@@ -132,7 +154,7 @@ describe('letterhead template', () => {
     expect(html).toMatch(/<li>T\. Etifoxine 50mg 1-1-1<\/li><li>Review after 20 days<\/li><li>Walk daily<\/li>/);
     expect(html).toContain('Consultant Neuropsychiatrist');
     expect(html).toContain('class="hl">Co-founder Equaroots');
-    expect(html).toContain('EQUAROOTS');
+    expect(html).toContain('class="brand-logo"');
   });
 });
 
@@ -158,7 +180,7 @@ describe('letterhead layouts', () => {
     expect(html).toContain('↻ Review after 20 days');
     expect(html).toContain('<li>Walk daily</li>');
     expect(html).not.toContain('<th>Notes</th>');
-    expect(html).toContain('EQUAROOTS');
+    expect(html).toContain('class="brand-logo"');
   });
 });
 

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { api, type AdminDoctor, type Medicine, type WebhookLog } from '../api';
+import { readXlsxTable } from '../xlsx';
 import { SignatureModal } from './SignatureModal';
 import type { ToastKind } from './Toast';
 
@@ -16,7 +17,7 @@ export function AdminPage({ toast, onDataChanged }: { toast: Toast; onDataChange
             ['doctors', 'Doctors & signatures'],
             ['medicines', 'Medicines'],
             ['webhooks', 'Cal.id webhook log'],
-            ['import', 'Import from Sheet'],
+            ['import', 'Import'],
           ] as [Tab, string][]
         ).map(([k, label]) => (
           <button key={k} className={`tab ${tab === k ? 'on' : ''}`} onClick={() => setTab(k)}>
@@ -27,7 +28,13 @@ export function AdminPage({ toast, onDataChanged }: { toast: Toast; onDataChange
       {tab === 'doctors' && <DoctorsTab toast={toast} onDataChanged={onDataChanged} />}
       {tab === 'medicines' && <MedicinesTab toast={toast} onDataChanged={onDataChanged} />}
       {tab === 'webhooks' && <WebhooksTab toast={toast} />}
-      {tab === 'import' && <ImportTab toast={toast} onDataChanged={onDataChanged} />}
+      {tab === 'import' && (
+        <>
+          <RegisterImport toast={toast} onDataChanged={onDataChanged} />
+          <div style={{ height: 16 }} />
+          <ImportTab toast={toast} onDataChanged={onDataChanged} />
+        </>
+      )}
     </main>
   );
 }
@@ -299,6 +306,54 @@ function ImportTab({ toast, onDataChanged }: { toast: Toast; onDataChanged: () =
       </div>
       <div className="actions" style={{ justifyContent: 'flex-start', marginTop: 14 }}>
         <button className="btn primary" disabled={busy} onClick={run}>{busy ? 'Importing…' : 'Import'}</button>
+      </div>
+      {result && <pre className="import-result">{result}</pre>}
+    </section>
+  );
+}
+
+function RegisterImport({ toast, onDataChanged }: { toast: Toast; onDataChanged: () => void }) {
+  const [file, setFile] = useState<File | undefined>();
+  const [busy, setBusy] = useState(false);
+  const [result, setResult] = useState('');
+
+  async function run() {
+    if (!file) return toast('Choose the register file first', 'error');
+    if (!confirm('Load this register and re-number every booking to its ER patient IDs?')) return;
+    setBusy(true);
+    setResult('');
+    try {
+      const body = /\.xlsx$/i.test(file.name) ? { table: await readXlsxTable(file) } : { csv: await file.text() };
+      setResult(await api.importRegister(body));
+      toast('Patient register loaded');
+      onDataChanged();
+    } catch (e) {
+      toast((e as Error).message, 'error');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <section className="panel">
+      <div className="panel-head">
+        <div>
+          <h2>Patient register (ER patient IDs)</h2>
+          <p className="small muted">
+            Upload the clinic's patient ID list (.xlsx or .csv with Name, Email, Patient ID, Lead Doctor). Bookings are
+            matched by email and take the patient's <b>ER/yy/nn</b> ID; everyone else gets the next ER number. New
+            patients continue the sequence automatically. Safe to re-upload after corrections.
+          </p>
+        </div>
+      </div>
+      <div className="inline-form">
+        <label className="file-field" style={{ flex: '1 1 320px' }}>
+          <span>Patient register</span>
+          <input type="file" accept=".xlsx,.csv,text/csv" onChange={(e) => setFile(e.target.files?.[0])} />
+        </label>
+      </div>
+      <div className="actions" style={{ justifyContent: 'flex-start' }}>
+        <button className="btn primary" disabled={busy || !file} onClick={run}>{busy ? 'Loading…' : 'Load register'}</button>
       </div>
       {result && <pre className="import-result">{result}</pre>}
     </section>

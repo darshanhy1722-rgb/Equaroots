@@ -1,5 +1,5 @@
 import QRCode from 'qrcode';
-import { LOGO_SVG } from '../brand.js';
+import { LOGO_HTML } from '../brand.js';
 import { config } from '../config.js';
 import type { Doctor } from './doctors.js';
 
@@ -111,7 +111,7 @@ function renderClassic(v: PrescriptionView): string {
   .band::after { content: ''; position: absolute; left: 0; right: 0; bottom: 0; height: 4.5mm; background: #566f5a; }
   .logo { position: absolute; left: 12mm; top: -2mm; width: 54mm; height: 50mm; background: #566f5a; padding: 2.4mm; z-index: 2; }
   .logo-inner { background: #fff; width: 100%; height: 100%; display: grid; place-items: center; }
-  .logo svg { width: 92%; height: auto; display: block; }
+  .logo img { width: auto; height: 100%; max-width: 100%; object-fit: contain; display: block; }
   .doc { position: absolute; right: 12mm; top: 6.5mm; text-align: right; color: #f1f3ef; line-height: 1.55; z-index: 1; }
   .doc .name { font-weight: 700; font-size: 14.5px; letter-spacing: .2px; }
   .doc .line { font-size: 13px; color: #e2e8df; }
@@ -143,7 +143,7 @@ function renderClassic(v: PrescriptionView): string {
 </style></head>
 <body><div class="page">
   <div class="band">
-    <div class="logo"><div class="logo-inner">${LOGO_SVG}</div></div>
+    <div class="logo"><div class="logo-inner">${LOGO_HTML}</div></div>
     <div class="doc">
       <div class="name">${esc(d.display_name)}</div>
       ${d.role ? `<div class="line">${esc(d.role)}</div>` : ''}
@@ -305,7 +305,7 @@ function renderModern(v: PrescriptionView): string {
   return `<!doctype html><html><head><meta charset="utf-8"><title>${esc(v.prescriptionId)}</title><style>${SHARED_CSS}
   .page { width: 210mm; min-height: 297mm; display: flex; flex-direction: column; padding: 13mm 15mm 0; }
   .head { display: flex; justify-content: space-between; align-items: center; }
-  .head .logo svg { width: 44mm; height: auto; display: block; }
+  .head .logo img { width: 40mm; height: auto; display: block; }
   .head .doc { text-align: right; }
   .doc .name { font-size: 20px; font-weight: 800; color: ${BRAND.green}; letter-spacing: .2px; }
   .doc .line { font-size: 11.5px; color: ${BRAND.muted}; }
@@ -325,7 +325,7 @@ function renderModern(v: PrescriptionView): string {
   .foot .rx { font-family: 'SF Mono', Menlo, monospace; font-size: 9.5px; }
 </style></head><body><div class="page">
   <div class="head">
-    <div class="logo">${LOGO_SVG}</div>
+    <div class="logo">${LOGO_HTML}</div>
     <div class="doc">
       <div class="name">${esc(d.display_name)}</div>
       ${d.role ? `<div class="line">${esc(d.role)}</div>` : ''}
@@ -373,7 +373,7 @@ function renderSidebar(v: PrescriptionView): string {
   .side { width: 60mm; background: ${BRAND.green}; color: #e8efe5; padding: 10mm 7mm; display: flex; flex-direction: column; gap: 6mm; position: relative; }
   .side::after { content: ''; position: absolute; top: 0; bottom: 0; right: 0; width: 1.6mm; background: linear-gradient(${BRAND.gold}, ${BRAND.sage}); }
   .side .logo { background: #fff; border-radius: 3mm; padding: 3mm; }
-  .side .logo svg { width: 100%; height: auto; display: block; }
+  .side .logo img { width: 100%; height: auto; display: block; }
   .side .name { font-size: 15px; font-weight: 800; color: #fff; line-height: 1.3; }
   .side .line { font-size: 10.5px; color: #cfdccb; }
   .side .hl { font-size: 10.5px; font-weight: 700; color: ${BRAND.gold}; margin-top: .6mm; }
@@ -396,7 +396,7 @@ function renderSidebar(v: PrescriptionView): string {
   .block { margin-bottom: 6mm; }
 </style></head><body><div class="page">
   <aside class="side">
-    <div class="logo">${LOGO_SVG}</div>
+    <div class="logo">${LOGO_HTML}</div>
     <div>
       <div class="name">${esc(d.display_name)}</div>
       ${d.role ? `<div class="line">${esc(d.role)}</div>` : ''}

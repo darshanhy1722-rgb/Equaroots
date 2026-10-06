@@ -6,6 +6,10 @@ import { createApp } from '../src/app.js';
 import { pool } from '../src/db.js';
 import { signBody } from '../src/lib/signature.js';
 import { runMigrations } from '../src/migrate.js';
+import { patientIdYear } from '../src/lib/normalize.js';
+
+const Y = patientIdYear();
+const ER = (n: string) => `ER/${Y}/${n}`;
 import { closeBrowser } from '../src/services/pdf.js';
 
 const app = createApp();
@@ -49,6 +53,7 @@ beforeAll(async () => {
     ('Dr Arjun Menon', 'MD Psychiatry', 'Reg No KMC/1', 'arjun@equaroots.com')`);
   await pool.query(`insert into medicines(name) values ('Escitalopram 10mg')`);
   fs.rmSync('./data/test-pdfs', { recursive: true, force: true });
+  fs.rmSync('./data/outbox', { recursive: true, force: true }); // emails from earlier runs
 });
 
 afterAll(async () => {
@@ -79,9 +84,9 @@ describe('Cal.id webhook', () => {
       'select cal_uid, patient_id, patient_type, d.email as doc from bookings b join doctors d on d.id=b.doctor_id order by b.id',
     );
     expect(rows).toEqual([
-      { cal_uid: 'c1', patient_id: 'PAT-001', patient_type: 'New', doc: 'radha@equaroots.com' },
-      { cal_uid: 'c2', patient_id: 'PAT-002', patient_type: 'New', doc: 'arjun@equaroots.com' },
-      { cal_uid: 'c3', patient_id: 'PAT-001', patient_type: 'Existing', doc: 'radha@equaroots.com' },
+      { cal_uid: 'c1', patient_id: ER('01'), patient_type: 'New', doc: 'radha@equaroots.com' },
+      { cal_uid: 'c2', patient_id: ER('02'), patient_type: 'New', doc: 'arjun@equaroots.com' },
+      { cal_uid: 'c3', patient_id: ER('01'), patient_type: 'Existing', doc: 'radha@equaroots.com' },
     ]);
   });
 
@@ -90,7 +95,7 @@ describe('Cal.id webhook', () => {
     await calEvent('BOOKING_RESCHEDULED', p).expect(200);
     const r = await pool.query("select cal_uid, patient_id, start_time from bookings where patient_name='Ben'");
     expect(r.rows).toHaveLength(1);
-    expect(r.rows[0]).toMatchObject({ cal_uid: 'c2b', patient_id: 'PAT-002' });
+    expect(r.rows[0]).toMatchObject({ cal_uid: 'c2b', patient_id: ER('02') });
     await calEvent('BOOKING_CANCELLED', { uid: 'c2b' }).expect(200);
     expect((await pool.query("select status from bookings where cal_uid='c2b'")).rows[0].status).toBe('CANCELLED');
     await calEvent('PING', {}).expect(200);
@@ -208,6 +213,10 @@ describe('prescriptions', () => {
     const mail = fs.readdirSync(outbox).filter((f) => f.endsWith('.json')).map((f) => JSON.parse(fs.readFileSync(path.join(outbox, f), 'utf8')));
     const sent = mail.find((m) => m.to === 'asha@x.com');
     expect(sent.subject).toContain('Dr Radha Dangaich');
+    // consultation date & time (IST) from the booking slot: 1 Mar 2026 05:00–05:30 UTC
+    expect(sent.subject).toContain('consultation on Sun, 1 Mar 2026');
+    expect(sent.html).toContain('<b>Sun, 1 Mar 2026</b>, 10:30 am – 11:00 am (IST)');
+    expect(sent.html).toContain(ER('01'));
 
     // signed PDF link works; tampered one does not
     const url = new URL(out.pdfUrl);
@@ -221,12 +230,12 @@ describe('prescriptions', () => {
   it('history excludes the current booking', async () => {
     const radha = await agentFor('radha@equaroots.com');
     const c3 = (await pool.query("select id from bookings where cal_uid='c3'")).rows[0].id;
-    const h = (await radha.get(`/api/patients/PAT-001/history?exclude_booking_id=${c3}`).expect(200)).body.history;
+    const h = (await radha.get(`/api/patients/${encodeURIComponent(ER('01'))}/history?exclude_booking_id=${c3}`).expect(200)).body.history;
     expect(h).toHaveLength(1);
     expect(h[0]).toMatchObject({ bookingId: c1, status: 'Sent', doctorName: 'Dr Radha Dangaich' });
-    expect((await radha.get(`/api/patients/PAT-001/history?exclude_booking_id=${c1}`)).body.history).toHaveLength(0);
+    expect((await radha.get(`/api/patients/${encodeURIComponent(ER('01'))}/history?exclude_booking_id=${c1}`)).body.history).toHaveLength(0);
     const arjun = await agentFor('arjun@equaroots.com');
-    await arjun.get('/api/patients/PAT-001/history').expect(403);
+    await arjun.get(`/api/patients/${encodeURIComponent(ER('01'))}/history`).expect(403);
     void c2;
   });
 });
@@ -386,7 +395,7 @@ describe('import: Cal.id bookings export', () => {
     expect(rows[0].start_time.toISOString()).toBe('2026-07-15T11:30:00.000Z');
     expect(rows[1]).toMatchObject({ cal_uid: '910001', patient_name: 'Fresh Person', patient_type: 'New', status: 'ACCEPTED',
       age: '28', gender: 'Female', patient_phone: '+919111111111', doctor: 'Dr Asha One' });
-    expect(rows[1].patient_id).toMatch(/^PAT-\d{3}$/);
+    expect(rows[1].patient_id).toMatch(/^ER\/\d{2}\/\d{2,}$/);
     expect(rows[2]).toMatchObject({ cal_uid: '910002', status: 'CANCELLED', patient_id: null, doctor: 'Dr. Bina Two' });
   });
 
@@ -416,5 +425,43 @@ describe('letterhead layout per doctor', () => {
       .expect(200).expect('Content-Type', 'application/pdf');
     expect((pdf.body as Buffer).subarray(0, 4).toString()).toBe('%PDF');
     await radha.get(`/api/doctors/${arjunId}/letterhead-preview`).expect(403);
+  });
+});
+
+describe('patient register (ER IDs)', () => {
+  it('re-keys bookings to the register by email, renumbers the rest, follows prescriptions, reports conflicts', async () => {
+    const admin = await agentFor('admin@example.com');
+    const before = (await pool.query("select id, patient_id from bookings where cal_uid='c1'")).rows[0];
+    const table = [
+      ['Name ', 'Email ', 'Patient ID ', 'Lead Doctor '],
+      ['Asha', 'Asha Rao <ASHA@x.com>', 'PID ER/26/146', 'Radha Dangaich'], // owner of c1/c3 (same phone)
+      ['Ghost', 'ghost@x.com', 'ER/26/147', 'Abhinav Pandey'],             // no bookings yet
+      ['Dup', 'dup@x.com', 'ER/26/147', 'x'],                               // conflict: same ID twice
+      ['Bad', 'bad@x.com', '146', 'x'],                                     // not an ER id
+    ];
+    const res = (await admin.post('/api/admin/import-patient-register').send({ table }).expect(200)).body;
+    expect(res.summary).toMatchObject({ registerRows: 4, loaded: 2, registerPatientsWithoutBookings: 1 });
+    expect(res.summary.problems).toEqual([
+      expect.stringContaining('ER/26/147 is also given to ghost@x.com'),
+      expect.stringContaining('"146" isn\'t an ER/yy/nn ID'),
+    ]);
+    const asha = (await pool.query("select cal_uid, patient_id, patient_type from bookings where cal_uid in ('c1','c3') order by start_time")).rows;
+    expect(asha).toEqual([
+      { cal_uid: 'c1', patient_id: 'ER/26/146', patient_type: 'New' },
+      { cal_uid: 'c3', patient_id: 'ER/26/146', patient_type: 'Existing' },
+    ]);
+    expect(before.patient_id).not.toBe('ER/26/146');
+    // the sent prescription for c1 follows its booking
+    expect((await pool.query('select patient_uid from consultations where booking_id=$1', [before.id])).rows[0].patient_uid).toBe('ER/26/146');
+    // nothing left on old-style IDs
+    expect((await pool.query("select count(*)::int n from bookings where patient_id like 'PAT-%'")).rows[0].n).toBe(0);
+    // a register patient booking for the first time keeps their ID and is Existing
+    await calEvent('BOOKING_CREATED', booking('g1', 'Ghost', 'ghost@x.com', '9555500000', { name: 'Dr Radha Dangaich', email: 'radha@equaroots.com' }, 25)).expect(200);
+    expect((await pool.query("select patient_id, patient_type from bookings where cal_uid='g1'")).rows[0]).toEqual({ patient_id: 'ER/26/147', patient_type: 'Existing' });
+    // re-import is a no-op
+    const again = (await admin.post('/api/admin/import-patient-register').send({ table }).expect(200)).body.summary;
+    expect(again).toMatchObject({ bookingsRenumbered: 0, newIds: 0 });
+    const radha = await agentFor('radha@equaroots.com');
+    await radha.post('/api/admin/import-patient-register').send({ table }).expect(403);
   });
 });

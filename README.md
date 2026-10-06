@@ -5,7 +5,7 @@ its own API and a PostgreSQL database. It replaces the Google Apps Script +
 Google Sheets version and keeps the same business rules.
 
 - **Cal.id → `/api/webhooks/cal`**: Cal.id posts to this endpoint directly. It checks the HMAC (`X-Cal-Signature-256`), so no Pipedream relay is needed.
-- **Patient IDs**: each booking gets a stable `PAT-XXX` and a **New/Existing** flag, matched on the phone's last 10 digits or the email.
+- **Patient IDs**: clinic IDs in the format **`ER/<yy>/<nn>`** (e.g. `ER/26/150`), matched on email or the phone's last 10 digits, with a **New/Existing** flag. Load the clinic's patient register once (**Admin tools → Import → Patient register**, `.xlsx` or `.csv`); new patients then continue the sequence (`ER/26/151`, …, restarting each year as `ER/27/01`).
 - **Visibility**: doctors see only their own patients. Admins (`ADMIN_EMAILS`) see everyone and can filter by doctor.
 - **Prescriptions**: you can save a draft, preview the PDF, or approve & send. Sending renders the PDF with Puppeteer, stores it privately, emails it to the patient and marks the booking `Prescription Sent`.
 - **Admin impersonation boundary**: the PDF and email always use the **treating doctor's** name, qualification and registration number, never the admin's. This is enforced on the server.
@@ -62,6 +62,7 @@ All endpoints require a session except the webhook.
 | GET | `/api/bookings/:bookingId/draft` | Latest draft or sent consultation, plus a signed PDF link |
 | POST | `/api/prescriptions?action=draft\|send` | `{ bookingId, impression, advice, medicines[] }` |
 | GET/POST | `/api/prescriptions/:bookingId/preview[?format=base64]` | Renders the PDF and writes nothing (POST previews unsaved form content) |
+| POST | `/api/admin/import-patient-register` | `{ table }` (rows from the .xlsx) or `{ csv }`: loads the ER-ID register and re-keys bookings to it |
 | POST | `/api/admin/import-csv` | `{ doctors, medicines, bookings, consultations }` as CSV strings |
 | POST | `/api/admin/reassign-token` | Rotates the Cal HMAC secret and returns it once |
 | GET | `/api/admin/webhook-logs` | Recent webhook log entries |

@@ -308,5 +308,5 @@ export function isPendingRx(p: Patient) {
 }
 
 export function Logo({ size = 40 }: { size?: number }) {
-  return <img src="/favicon.svg" width={size} height={size * 0.68} alt="EquaRoots" style={{ objectFit: 'contain' }} />;
+  return <img src="/favicon.png" width={size} height={size * 0.68} alt="EquaRoots" style={{ objectFit: 'contain' }} />;
 }

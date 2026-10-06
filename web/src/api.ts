@@ -147,6 +147,8 @@ export const api = {
     ),
   deleteMedicine: (id: number) => req(`/api/admin/medicines/${id}`, { method: 'DELETE' }),
   webhookLogs: () => req<{ logs: WebhookLog[] }>('/api/admin/webhook-logs?limit=100').then((r) => r.logs),
+  importRegister: (body: { table?: string[][]; csv?: string }) =>
+    req<{ text: string }>('/api/admin/import-patient-register', { method: 'POST', body: JSON.stringify(body) }).then((r) => r.text),
   importCsv: (files: Record<string, string>) =>
     req<{ text: string }>('/api/admin/import-csv', { method: 'POST', body: JSON.stringify(files) }).then((r) => r.text),
   async preview(bookingId: number, body: { impression: string; progression: string; advice: string; medicines: MedLine[] }): Promise<Blob> {

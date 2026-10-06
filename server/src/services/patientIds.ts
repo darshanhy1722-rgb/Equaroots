@@ -1,5 +1,5 @@
 import type { Queryable } from '../db.js';
-import { formatPatientId, normalizeEmail, normalizePhone, parsePatientIdNumber } from '../lib/normalize.js';
+import { formatPatientId, normalizeEmail, normalizePhone, parsePatientId, patientIdYear } from '../lib/normalize.js';
 
 export interface AssignableBooking {
   id: number;
@@ -9,6 +9,13 @@ export interface AssignableBooking {
   status: string;
   start_time: Date | string | null;
   created_at: Date | string;
+  patient_name?: string | null;
+}
+
+/** A patient already in the clinic's register (the master list of ER IDs). */
+export interface KnownPatient {
+  patient_id: string;
+  email: string | null;
 }
 
 export interface Assignment {
@@ -29,14 +36,29 @@ function ts(v: Date | string | null): number {
  * patient_id are never touched (idempotent). Processing is oldest-first so a
  * returning patient's earlier booking always claims the ID.
  */
-export function computePatientAssignments(all: AssignableBooking[]): Assignment[] {
+export function computePatientAssignments(
+  all: AssignableBooking[],
+  known: KnownPatient[] = [],
+  now: Date = new Date(),
+): Assignment[] {
   const byPhone = new Map<string, string>();
   const byEmail = new Map<string, string>();
+  const year = patientIdYear(now);
   let maxN = 0;
+  const seeId = (id: string) => {
+    const p = parsePatientId(id);
+    if (p && p.year === year) maxN = Math.max(maxN, p.n);
+  };
 
+  // The register first: a returning patient keeps their clinic ID even if this is their first booking here.
+  for (const k of known) {
+    seeId(k.patient_id);
+    const e = normalizeEmail(k.email);
+    if (e && !byEmail.has(e)) byEmail.set(e, k.patient_id);
+  }
   for (const b of all) {
     if (!b.patient_id) continue;
-    maxN = Math.max(maxN, parsePatientIdNumber(b.patient_id));
+    seeId(b.patient_id);
     const p = normalizePhone(b.patient_phone);
     const e = normalizeEmail(b.patient_email);
     if (p && !byPhone.has(p)) byPhone.set(p, b.patient_id);
@@ -58,7 +80,7 @@ export function computePatientAssignments(all: AssignableBooking[]): Assignment[
       patientId = existing;
       type = 'Existing';
     } else {
-      patientId = formatPatientId(++maxN);
+      patientId = formatPatientId(++maxN, year);
       type = 'New';
     }
     if (p && !byPhone.has(p)) byPhone.set(p, patientId);
@@ -68,19 +90,31 @@ export function computePatientAssignments(all: AssignableBooking[]): Assignment[
   return out;
 }
 
-/** DB wrapper. Serialised with an advisory lock so concurrent webhooks can't mint duplicate IDs. */
+/**
+ * DB wrapper. Serialised with an advisory lock so concurrent webhooks can't mint duplicate IDs.
+ * New IDs are also added to the patient register so they stay reserved.
+ */
 export async function assignPatientIdsAndFlags(db: Queryable): Promise<Assignment[]> {
   await db.query('select pg_advisory_xact_lock(4242001)');
   const { rows } = await db.query<AssignableBooking>(
-    'select id, patient_id, patient_email, patient_phone, status, start_time, created_at from bookings',
+    'select id, patient_id, patient_email, patient_phone, patient_name, status, start_time, created_at from bookings',
   );
-  const assignments = computePatientAssignments(rows);
+  const known = (await db.query<KnownPatient>('select patient_id, email from patients')).rows;
+  const assignments = computePatientAssignments(rows, known);
+  const byId = new Map(rows.map((r) => [r.id, r]));
   for (const a of assignments) {
     await db.query('update bookings set patient_id=$2, patient_type=$3, updated_at=now() where id=$1', [
       a.id,
       a.patient_id,
       a.patient_type,
     ]);
+    if (a.patient_type === 'New') {
+      const b = byId.get(a.id);
+      await db.query(
+        `insert into patients(patient_id, name, email, source) values ($1,$2,$3,'auto') on conflict (patient_id) do nothing`,
+        [a.patient_id, b?.patient_name ?? null, normalizeEmail(b?.patient_email) || null],
+      );
+    }
   }
   return assignments;
 }
