@@ -118,6 +118,7 @@ describe('letterhead template', () => {
   });
   it('numbers medicines then advice lines, prints letterhead lines and escapes input', () => {
     const html = renderPrescriptionHtml({
+      layout: 'classic',
       prescriptionId: 'RX-1234567890', date: new Date('2026-07-15T06:00:00Z'),
       doctor: { display_name: 'Dr Radha Dangaich', role: 'MD Psychiatry (NIMHANS)', reg_no: 'Reg No DMC/R/25251', signature_url: null,
         designation: 'Consultant Neuropsychiatrist', highlight: 'Co-founder Equaroots' },
@@ -131,6 +132,32 @@ describe('letterhead template', () => {
     expect(html).toMatch(/<li>T\. Etifoxine 50mg 1-1-1<\/li><li>Review after 20 days<\/li><li>Walk daily<\/li>/);
     expect(html).toContain('Consultant Neuropsychiatrist');
     expect(html).toContain('class="hl">Co-founder Equaroots');
+    expect(html).toContain('EQUAROOTS');
+  });
+});
+
+describe('letterhead layouts', () => {
+  const base = {
+    prescriptionId: 'RX-1234567890', date: new Date('2026-07-15T06:00:00Z'),
+    patient: { name: 'Pat <x>', patientId: 'PAT-009', age: '30', gender: 'Male', phone: null, email: null, consultationAt: null },
+    impression: 'GAD', progression: '', advice: 'Walk daily\nReview after 20 days',
+    medicines: [{ name: 'T. Etifoxine', dosage: '50mg', frequency: '1-1-1' }],
+  };
+  const doctor = (letterhead_layout?: string) => ({ display_name: 'Dr X', role: 'MD', reg_no: 'R1', signature_url: null, letterhead_layout });
+  it("uses the treating doctor's layout, modern by default", () => {
+    expect(renderPrescriptionHtml({ ...base, doctor: doctor() })).toContain('class="card"');
+    expect(renderPrescriptionHtml({ ...base, doctor: doctor('sidebar') })).toContain('class="side"');
+    expect(renderPrescriptionHtml({ ...base, doctor: doctor('classic') })).toContain('Patient Details-');
+    expect(renderPrescriptionHtml({ ...base, doctor: doctor('bogus') })).toContain('class="card"');
+    expect(renderPrescriptionHtml({ ...base, doctor: doctor('classic'), layout: 'sidebar' })).toContain('class="side"');
+  });
+  it('modern: escaped patient, chip doses, follow-up pulled out, empty columns hidden', () => {
+    const html = renderPrescriptionHtml({ ...base, doctor: doctor('modern') });
+    expect(html).toContain('Pat &lt;x&gt;');
+    expect(html).toContain('<span class="dose">1-1-1</span>');
+    expect(html).toContain('↻ Review after 20 days');
+    expect(html).toContain('<li>Walk daily</li>');
+    expect(html).not.toContain('<th>Notes</th>');
     expect(html).toContain('EQUAROOTS');
   });
 });

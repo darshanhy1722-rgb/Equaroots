@@ -166,7 +166,7 @@ export default function App() {
         )}
         <div className="who">
           {boot!.myDoctors.length > 0 && (
-            <button className="btn ghost sm" onClick={() => setSigning(true)}>✍︎ My signature</button>
+            <button className="btn ghost sm" onClick={() => setSigning(true)}>✍︎ My letterhead</button>
           )}
           <div className="who-text">
             <div className="who-name">{boot!.doctor?.display_name ?? (boot!.isAdmin ? 'Admin' : '')}</div>

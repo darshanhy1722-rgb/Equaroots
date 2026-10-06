@@ -59,7 +59,7 @@ export async function verifyGoogleCredential(credential: string): Promise<string
 
 export async function loadViewer(email: string): Promise<Viewer> {
   const { rows } = await pool.query<Doctor>(
-    'select id, display_name, role, reg_no, designation, highlight, signature_url, email from doctors where lower(email)=lower($1) order by id',
+    'select id, display_name, role, reg_no, designation, highlight, letterhead_layout, signature_url, email from doctors where lower(email)=lower($1) order by id',
     [email],
   );
   const isAdmin = isAdminEmail(email);

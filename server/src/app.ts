@@ -8,6 +8,8 @@ import { config } from './config.js';
 import { pool } from './db.js';
 import { HttpError, loadBookingForViewer } from './services/access.js';
 import { listDoctors, validateSignature, type Doctor } from './services/doctors.js';
+import { htmlToPdf } from './services/pdf.js';
+import { clinicQrSvg, isLayout, LETTERHEAD_LAYOUTS, renderPrescriptionHtml } from './services/prescriptionTemplate.js';
 import { approveAndSend, latestConsultation, previewPdf, sanitizeInput, saveDraft } from './services/prescriptions.js';
 import { rotateCalWebhookSecret } from './services/settings.js';
 import { formatSummary, importSheetData } from './services/sheetImport.js';
@@ -240,6 +242,42 @@ export function createApp() {
     res.json({ ok: true, hasSignature: !!sig });
   }));
 
+  // ── Letterhead layout (per treating doctor) ──
+  authed.put('/doctors/:id/letterhead', h(async (req, res) => {
+    await canEditDoctor(req, Number(req.params.id));
+    const layout = req.body?.layout;
+    if (!isLayout(layout)) throw new HttpError(400, `layout must be one of ${LETTERHEAD_LAYOUTS.join(', ')}`);
+    await pool.query('update doctors set letterhead_layout=$2 where id=$1', [Number(req.params.id), layout]);
+    res.json({ ok: true, layout });
+  }));
+
+  // Sample prescription in a given layout, so a doctor can compare before choosing. Writes nothing.
+  authed.get('/doctors/:id/letterhead-preview', h(async (req, res) => {
+    const d = await canEditDoctor(req, Number(req.params.id));
+    const layout = isLayout(req.query.layout) ? req.query.layout : isLayout(d.letterhead_layout) ? d.letterhead_layout : 'modern';
+    const html = renderPrescriptionHtml({
+      layout,
+      qrSvg: await clinicQrSvg(),
+      prescriptionId: 'RX-SAMPLE',
+      date: new Date(),
+      doctor: d,
+      patient: { name: 'Sample Patient', patientId: 'PAT-000', age: '30', gender: 'Male', phone: '+91 90000 00000', email: 'patient@example.com', consultationAt: new Date() },
+      impression: 'Generalised anxiety disorder with initial insomnia',
+      progression: 'Sleep improved; mild residual anxiety on work days',
+      medicines: [
+        { name: 'T. Escitalopram', dosage: '10mg', frequency: '1-0-0', duration: '4 weeks', notes: 'After breakfast' },
+        { name: 'T. Mirtazapine', dosage: '7.5mg', frequency: '0-0-1', duration: '7 days then stop', notes: '' },
+        { name: 'Melatonin gummies (equarest)', dosage: '', frequency: '0-0-1', duration: '', notes: '' },
+      ],
+      advice: 'Vit D3 60k IU capsule once weekly for 8 weeks\n20-minute walk daily\nReview after 20 days',
+    });
+    const pdf = await htmlToPdf(html);
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `inline; filename="letterhead-${layout}.pdf"`);
+    res.setHeader('Cache-Control', 'no-store');
+    res.send(pdf);
+  }));
+
   // ── Admin: doctors ──
   const doctorBody = (b: any) => {
     const display_name = String(b?.display_name ?? '').trim();
@@ -258,7 +296,7 @@ export function createApp() {
 
   authed.get('/admin/doctors', requireAdmin, h(async (_req, res) => {
     const { rows } = await pool.query(
-      `select d.id, d.display_name, d.role, d.reg_no, d.designation, d.highlight, d.email, d.signature_url,
+      `select d.id, d.display_name, d.role, d.reg_no, d.designation, d.highlight, d.letterhead_layout, d.email, d.signature_url,
               (select count(*)::int from bookings b where b.doctor_id = d.id) as bookings
          from doctors d order by d.display_name`,
     );

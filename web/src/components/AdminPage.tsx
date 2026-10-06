@@ -92,7 +92,7 @@ function DoctorsTab({ toast, onDataChanged }: { toast: Toast; onDataChanged: () 
       <div className="table-wrap">
         <table className="grid-table">
           <thead>
-            <tr><th>Name</th><th>Qualification</th><th>Reg No</th><th>Login email</th><th>Signature</th><th>Bookings</th><th></th></tr>
+            <tr><th>Name</th><th>Qualification</th><th>Reg No</th><th>Login email</th><th>Signature</th><th>Layout</th><th>Bookings</th><th></th></tr>
           </thead>
           <tbody>
             {doctors.map((d) => (
@@ -109,6 +109,11 @@ function DoctorsTab({ toast, onDataChanged }: { toast: Toast; onDataChanged: () 
                     {d.signature_url ? <img src={d.signature_url} alt="signature" /> : <span className="link">+ Add signature</span>}
                   </button>
                 </td>
+                <td>
+                  <button className="btn ghost sm" onClick={() => setSigning(d)} title="Choose prescription layout">
+                    {(d.letterhead_layout ?? 'modern').replace(/^./, (c) => c.toUpperCase())}
+                  </button>
+                </td>
                 <td>{d.bookings}</td>
                 <td><div className="row-actions">
                   <button className="btn ghost sm" onClick={() => setEditing({ id: d.id, display_name: d.display_name, role: d.role ?? '', designation: d.designation ?? '', highlight: d.highlight ?? '', reg_no: d.reg_no ?? '', email: d.email })}>Edit</button>
@@ -117,7 +122,7 @@ function DoctorsTab({ toast, onDataChanged }: { toast: Toast; onDataChanged: () 
               </tr>
             ))}
             {!doctors.length && (
-              <tr><td colSpan={7} className="muted center-pad">No doctors yet.</td></tr>
+              <tr><td colSpan={8} className="muted center-pad">No doctors yet.</td></tr>
             )}
           </tbody>
         </table>

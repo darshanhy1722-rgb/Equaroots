@@ -395,3 +395,23 @@ describe('import: Cal.id bookings export', () => {
     expect(after).toEqual([{ id: before.id, cal_uid: 'uid-string-abc', patient_id: before.patient_id }]);
   });
 });
+
+describe('letterhead layout per doctor', () => {
+  it('doctor picks own layout (not others); admin can set anyone; invalid rejected; preview is a PDF', async () => {
+    const radhaId = (await pool.query("select id from doctors where email='radha@equaroots.com'")).rows[0].id;
+    const arjunId = (await pool.query("select id from doctors where email='arjun@equaroots.com'")).rows[0].id;
+    const radha = await agentFor('radha@equaroots.com');
+    await radha.put(`/api/doctors/${radhaId}/letterhead`).send({ layout: 'sidebar' }).expect(200);
+    await radha.put(`/api/doctors/${arjunId}/letterhead`).send({ layout: 'sidebar' }).expect(403);
+    await radha.put(`/api/doctors/${radhaId}/letterhead`).send({ layout: 'fancy' }).expect(400);
+    expect((await radha.get('/api/bootstrap')).body.doctor.letterhead_layout).toBe('sidebar');
+    const admin = await agentFor('admin@example.com');
+    await admin.put(`/api/doctors/${arjunId}/letterhead`).send({ layout: 'classic' }).expect(200);
+    expect((await pool.query('select letterhead_layout from doctors where id=$1', [arjunId])).rows[0].letterhead_layout).toBe('classic');
+    const pdf = await radha.get(`/api/doctors/${radhaId}/letterhead-preview?layout=modern`).buffer(true)
+      .parse((r, cb) => { const c: Buffer[] = []; r.on('data', (x: Buffer) => c.push(x)); r.on('end', () => cb(null, Buffer.concat(c))); })
+      .expect(200).expect('Content-Type', 'application/pdf');
+    expect((pdf.body as Buffer).subarray(0, 4).toString()).toBe('%PDF');
+    await radha.get(`/api/doctors/${arjunId}/letterhead-preview`).expect(403);
+  });
+});

@@ -1,3 +1,5 @@
+export type Layout = 'modern' | 'sidebar' | 'classic';
+
 export interface Doctor {
   id: number;
   display_name: string;
@@ -6,6 +8,7 @@ export interface Doctor {
   email: string;
   designation?: string | null;
   highlight?: string | null;
+  letterhead_layout?: Layout;
   hasSignature?: boolean;
 }
 export interface AdminDoctor extends Doctor {
@@ -130,6 +133,9 @@ export const api = {
     req<{ signature: string | null }>(`/api/doctors/${doctorId}/signature`).then((r) => r.signature),
   setSignature: (doctorId: number, signature: string | null) =>
     req(`/api/doctors/${doctorId}/signature`, { method: 'PUT', body: JSON.stringify({ signature }) }),
+  setLetterhead: (doctorId: number, layout: Layout) =>
+    req(`/api/doctors/${doctorId}/letterhead`, { method: 'PUT', body: JSON.stringify({ layout }) }),
+  letterheadPreviewUrl: (doctorId: number, layout: Layout) => `/api/doctors/${doctorId}/letterhead-preview?layout=${layout}`,
   adminDoctors: () => req<{ doctors: AdminDoctor[] }>('/api/admin/doctors').then((r) => r.doctors),
   createDoctor: (d: Partial<Doctor>) => req('/api/admin/doctors', { method: 'POST', body: JSON.stringify(d) }),
   updateDoctor: (id: number, d: Partial<Doctor>) =>

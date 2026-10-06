@@ -221,3 +221,23 @@ textarea:focus, .med-row input:focus { border-color: var(--brand-2); box-shadow:
 .opt { font-style: normal; font-weight: 400; text-transform: none; letter-spacing: 0; color: var(--muted); font-size: 12px; }
 .topbar { border-bottom: 3px solid #566f5a; }
 .brand-name { font-family: Georgia, 'Times New Roman', serif; font-style: italic; font-weight: 800; letter-spacing: .6px; text-transform: uppercase; }
+
+/* Letterhead layout picker */
+.modal.wide { width: min(760px, 100%); }
+.lp { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+.lp-opt { border: 1.5px solid var(--line); border-radius: 12px; padding: 10px; display: flex; flex-direction: column; gap: 6px; background: #fff; }
+.lp-opt.on { border-color: var(--brand); box-shadow: 0 0 0 3px var(--brand-soft); }
+.lp-pick { border: 0; background: transparent; padding: 0; text-align: left; cursor: pointer; display: flex; flex-direction: column; gap: 4px; }
+.lp-thumb { width: 100%; height: auto; border: 1px solid var(--line); border-radius: 6px; background: #fff; }
+.lp-name { font-weight: 700; display: flex; align-items: center; gap: 6px; }
+.lp-check { background: var(--brand); color: #fff; border-radius: 50%; width: 18px; height: 18px; display: inline-grid; place-items: center; font-size: 11px; }
+.lp-blurb { font-size: 12px; color: var(--muted); line-height: 1.35; }
+.lp-prev { font-size: 12.5px; font-weight: 600; }
+@media (max-width: 720px) { .lp { grid-template-columns: 1fr 1fr; } }
+.field select, .field input { flex: none; }
+.lp-blurb { font-weight: 400; }
+.lp-name { font-weight: 700; }
+.field .lp span { font-size: inherit; color: inherit; font-weight: inherit; }
+.field .lp .lp-name { font-weight: 700; font-size: 14px; color: var(--text); }
+.field .lp .lp-blurb { font-size: 12px; color: var(--muted); font-weight: 400; }
+.field .lp .lp-check { color: #fff; font-size: 11px; }

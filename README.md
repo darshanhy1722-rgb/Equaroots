@@ -98,7 +98,13 @@ Postgres database. After the first deploy:
 
 ## Letterhead
 
-The PDF uses the EquaRoots letterhead: the lotus logo (vector, `server/src/brand.ts` and `web/public/logo.svg`), the doctor's name, qualification, designation and gold highlight line (editable in **Admin tools → Doctors**), numbered *Advise-* items (the medicines first, then each advice line), the doctor's digital signature with a stamp box, and a footer with a QR code and contact details (`CLINIC_*` env vars).
+Each treating doctor chooses the prescription layout used for their PDFs (**✍︎ My letterhead**, or **Admin tools → Doctors → Layout**), with a sample-PDF preview of each:
+
+- **Modern** (default): white page, lotus logo + doctor header with a green→gold rule, patient card, medicines table with dose chips, advice bullets and a highlighted follow-up.
+- **Sidebar**: green side panel with the logo, doctor details, contacts and QR; prescription on the right.
+- **Classic**: the original green EquaRoots letterhead band.
+
+All layouts keep the same lotus logo (`server/src/brand.ts`, `web/public/logo.svg`), the doctor's digital signature, and the clinic contact details (`CLINIC_*` env vars). The doctor shown is always the booking's treating doctor, never the admin who sends it.
 
 ## Security notes
 

@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
-import { api, type Doctor } from '../api';
+import { api, type Doctor, type Layout } from '../api';
+import { LayoutPicker } from './LayoutPicker';
 import { SignaturePad, type SignaturePadHandle } from './SignaturePad';
 import type { ToastKind } from './Toast';
 
@@ -19,6 +20,9 @@ export function SignatureModal({
   const [initial, setInitial] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
+  const [layouts, setLayouts] = useState<Record<number, Layout>>(() =>
+    Object.fromEntries(doctors.map((d) => [d.id, d.letterhead_layout ?? 'modern'])),
+  );
   const pad = useRef<SignaturePadHandle>(null);
   const doctor = doctors.find((d) => d.id === doctorId);
 
@@ -54,9 +58,9 @@ export function SignatureModal({
 
   return (
     <div className="overlay center-overlay" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
-      <div className="modal" role="dialog" aria-label="Digital signature">
+      <div className="modal wide" role="dialog" aria-label="Letterhead and signature">
         <div className="modal-head">
-          <h3>Digital signature</h3>
+          <h3>Letterhead &amp; signature</h3>
           <button className="icon-btn" onClick={onClose} aria-label="Close">×</button>
         </div>
         {doctors.length > 1 && (
@@ -69,7 +73,27 @@ export function SignatureModal({
             </select>
           </label>
         )}
-        <p className="small muted">
+        <div className="field">
+          <span>Prescription layout</span>
+          <LayoutPicker
+            value={layouts[doctorId!] ?? 'modern'}
+            previewUrl={(l) => api.letterheadPreviewUrl(doctorId!, l)}
+            onChange={async (l) => {
+              const prev = layouts[doctorId!];
+              setLayouts({ ...layouts, [doctorId!]: l });
+              try {
+                await api.setLetterhead(doctorId!, l);
+                toast(`${doctor?.display_name}'s prescriptions will use the ${l} layout`);
+                onSaved?.();
+              } catch (e) {
+                setLayouts({ ...layouts, [doctorId!]: prev });
+                toast((e as Error).message, 'error');
+              }
+            }}
+          />
+        </div>
+        <div className="field"><span>Digital signature</span></div>
+        <p className="small muted" style={{ marginTop: -6 }}>
           This signature is printed on every prescription issued under <b>{doctor?.display_name}</b>, with a “Digitally
           signed” date stamp.
         </p>
